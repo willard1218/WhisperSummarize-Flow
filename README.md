@@ -71,6 +71,14 @@ cp youtube_subscriptions.example.json youtube_subscriptions.json
 - `launchd/update_schedule.sh`
   修改每天自動執行時間。
 
+## 專案架構
+
+本專案採用模組化設計，確保邏輯的一致性：
+
+- **核心模組**：`run_registered_podcasts.py` 與 `run_registered_youtube.py` 封裝了各自來源的下載、路徑解析與郵件邏輯。
+- **整合入口**：`run_daily_pipeline.py` 作為主要的自動化入口， import 核心模組的函式並實作「分階段執行」（下載 -> 轉錄 -> 寄信），以提升穩定性。
+- **共用工具**：`recipient_groups.py` 處理收件人群組解析；`convert_transcript_opencc.py` 負責繁簡轉換。
+
 ## 註冊 podcast
 
 註冊一個 podcast，直接綁定本機收件人群組：
