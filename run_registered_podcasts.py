@@ -114,8 +114,10 @@ end tell
         server.login(user, password)
         server.send_message(msg)
 
-def download_single_podcast(rss_url: str, output_dir: Path, run_date: date, downloader: Path, title: str = "") -> subprocess.CompletedProcess:
-    command = [sys.executable, str(downloader), rss_url, "-o", str(output_dir), "--episode-date", run_date.isoformat()]
+def download_single_podcast(rss_url: str, output_dir: Path, run_date: date | None, downloader: Path, title: str = "") -> subprocess.CompletedProcess:
+    command = [sys.executable, str(downloader), rss_url, "-o", str(output_dir)]
+    if run_date:
+        command.extend(["--episode-date", run_date.isoformat()])
     if title:
         command.extend(["--show-title", title])
     return subprocess.run(command, text=True, capture_output=True)
@@ -155,6 +157,10 @@ def main() -> int:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         res = download_single_podcast(rss_url, out_dir, args.run_date, downloader, title)
+        if res.returncode == NO_EPISODE_EXIT_CODE and args.debug:
+            print(f"Debug mode fallback: Fetching latest episode for '{title}' regardless of date")
+            res = download_single_podcast(rss_url, out_dir, None, downloader, title)
+
         if res.returncode != 0 and res.returncode != NO_EPISODE_EXIT_CODE:
             overall_success = False; continue
 

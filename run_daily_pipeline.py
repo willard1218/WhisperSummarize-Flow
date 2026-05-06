@@ -123,6 +123,10 @@ def main() -> int:
         t_start = time.monotonic()
         if item.kind == "podcast":
             res = download_single_podcast(item.source_url, item.output_dir, args.run_date, downloader, item.title)
+            if res.returncode == NO_EPISODE_EXIT_CODE and args.debug:
+                print(f"Debug mode fallback: Fetching latest episode for {item.label} regardless of date")
+                res = download_single_podcast(item.source_url, item.output_dir, None, downloader, item.title)
+            
             print_completed_process(res)
             if res.returncode == NO_EPISODE_EXIT_CODE: log_event("download", "skipped", time.monotonic()-t_start, item.label, "no episode")
             elif res.returncode == 0:
