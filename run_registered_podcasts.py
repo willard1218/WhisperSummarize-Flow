@@ -72,6 +72,9 @@ def send_mail(recipient: str, subject: str, attachment_path: Path) -> None:
     from_addr = os.environ.get("SMTP_FROM", user)
 
     if not all([host, user, password]):
+        if sys.platform != "darwin":
+            raise RuntimeError("SMTP settings are incomplete. Apple Mail fallback is only available on macOS. Please configure SMTP in local_config.sh.")
+        
         # Fallback to AppleScript if SMTP is not configured
         script = f'''
 set recipientAddress to "{recipient}"

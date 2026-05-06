@@ -42,8 +42,8 @@ if [[ -f "$LOCAL_CONFIG_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$LOCAL_CONFIG_FILE"
 fi
-export GENSRT_SCRIPT="${GENSRT_SCRIPT:-$HOME/Developer/gensrt.sh}"
-export PYTHON_BIN="${PYTHON_BIN:-/opt/homebrew/bin/python3}"
+export GENSRT_SCRIPT="${GENSRT_SCRIPT:-gensrt.sh}"
+export PYTHON_BIN="${PYTHON_BIN:-python3}"
 export RECIPIENT_CONFIG_FILE="${RECIPIENT_CONFIG_FILE:-$BASE_DIR/recipient_groups.local.json}"
 export OPENCC_TRADITIONALIZE="${OPENCC_TRADITIONALIZE:-0}"
 export OPENCC_CONFIG="${OPENCC_CONFIG:-s2twp.json}"

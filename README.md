@@ -136,6 +136,17 @@ python3 run_daily_pipeline.py --debug
 DEBUG_RECIPIENT="yourname@example.com"
 ```
 
+## 跨平台部署 (Windows / Linux)
+
+本專案的核心 Python 程式（`run_daily_pipeline.py`）是跨平台的，**不依賴特定的排程工具**。
+
+1. **依賴項**：確保系統已安裝 `python3`、`yt-dlp`、`ffmpeg`。
+2. **寄信設定**：非 macOS 系統**不支援 Apple Mail 寄信**，必須在環境變數或啟動腳本中提供完整的 SMTP 設定。
+3. **排程設定**：
+   - **macOS**：使用專案內提供的 `launchd/run_soundon_daily.sh`。
+   - **Windows**：請建立一個批次檔（`.bat`）來設定環境變數並執行 `python run_daily_pipeline.py`。然後使用「Windows 工作排程器 (Task Scheduler)」設定每日執行，並在排程條件中勾選「喚醒電腦以執行此工作」來取代 macOS 的 `caffeinate` 防休眠機制。
+   - **Linux**：可使用 `cron` 或 `systemd` 搭配 Bash 腳本執行。
+
 ## 簡轉繁規則
 
 如果你想在逐字稿完成後，用本機 OpenCC 把簡體中文轉成繁體中文：

@@ -20,3 +20,6 @@ recipient_groups.local.json
 local_config.sh
 subscriptions.json
 youtube_subscriptions.json
+
+# Local system configurations
+*.plist
