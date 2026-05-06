@@ -100,10 +100,20 @@ def main() -> int:
     downloader = base_dir / "download_latest_podcast.py"
 
     items = build_items(Path(args.podcast_config).expanduser().resolve(), Path(args.youtube_config).expanduser().resolve(), Path(args.recipient_config).expanduser().resolve(), root)
+    
+    # 強制 Debug 模式覆蓋邏輯
     if args.debug:
-        mail = os.environ.get("DEBUG_RECIPIENT")
-        if not mail: raise SystemExit("DEBUG_RECIPIENT not set.")
-        for item in items: item.emails = [mail]
+        debug_email = os.environ.get("DEBUG_RECIPIENT")
+        if not debug_email:
+            print("ERROR: DEBUG_RECIPIENT environment variable is not set.", file=sys.stderr)
+            return 1
+        print(f"DEBUG MODE ENABLED: All emails will be redirected to {debug_email}")
+        for item in items:
+            item.emails = [debug_email]
+
+    if not items:
+        print("No subscriptions found.")
+        return 0
 
     overall_ok = True
     print("Download phase: start")
