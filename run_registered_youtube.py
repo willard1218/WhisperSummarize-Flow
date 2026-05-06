@@ -84,7 +84,28 @@ def main() -> int:
         ], text=True, capture_output=True, env=env)
         
         if res.stdout: print(res.stdout)
-        if res.returncode != 0: overall_success = False
+        if res.returncode != 0:
+            overall_success = False
+            continue
+
+        transcript_path = None
+        for line in res.stdout.splitlines():
+            if line.startswith("Transcript: "):
+                transcript_path = Path(line.split(": ", 1)[1].strip())
+        
+        if transcript_path and transcript_path.exists():
+            from run_registered_podcasts import send_mail, marker_path_for
+            subject = f"YouTube transcript {transcript_path.stem.split('__')[0]}"
+            for email in emails:
+                marker = marker_path_for(transcript_path, email)
+                if not marker.exists():
+                    try:
+                        send_mail(email, subject, transcript_path)
+                        marker.touch()
+                        print(f"Sent mail to {email}")
+                    except Exception as e:
+                        print(f"Failed to send mail to {email}: {e}")
+                        overall_success = False
 
     return 0 if overall_success else 1
 
