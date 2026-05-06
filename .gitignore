@@ -1,0 +1,22 @@
+.DS_Store
+__pycache__/
+
+# Generated downloads and transcripts
+output/
+*.mp3
+*.wav
+*.srt
+*.srt.txt
+*.mail-sent
+
+# Runtime logs
+launchd_download_and_transcribe.log
+launchd_stdout.log
+launchd_stderr.log
+id.txt
+
+# Local private recipient config
+recipient_groups.local.json
+local_config.sh
+subscriptions.json
+youtube_subscriptions.json

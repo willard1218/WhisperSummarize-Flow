@@ -1,0 +1,8 @@
+{
+  "subscriptions": [
+    {
+      "channel_url": "https://www.youtube.com/@channelname/streams",
+      "recipient_group": "your_group_name"
+    }
+  ]
+}
