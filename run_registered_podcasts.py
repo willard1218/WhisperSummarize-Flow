@@ -5,10 +5,12 @@ import hashlib
 import json
 import os
 import re
+import smtplib
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from datetime import date
+from email.message import EmailMessage
 from pathlib import Path
 
 from download_latest_podcast import fetch_bytes, sanitize_filename
@@ -63,7 +65,15 @@ def marker_path_for(transcript_path: Path, email: str) -> Path:
     return transcript_path.with_name(f"{transcript_path.name}.{digest}.mail-sent")
 
 def send_mail(recipient: str, subject: str, attachment_path: Path) -> None:
-    script = f'''
+    host = os.environ.get("SMTP_HOST")
+    port = int(os.environ.get("SMTP_PORT", 587))
+    user = os.environ.get("SMTP_USER")
+    password = os.environ.get("SMTP_PASS")
+    from_addr = os.environ.get("SMTP_FROM", user)
+
+    if not all([host, user, password]):
+        # Fallback to AppleScript if SMTP is not configured
+        script = f'''
 set recipientAddress to "{recipient}"
 set subjectText to "{subject}"
 set attachmentPath to POSIX file "{attachment_path}"
@@ -77,7 +87,29 @@ tell application "Mail"
   end tell
 end tell
 '''
-    subprocess.run(["osascript", "-e", script], check=True)
+        subprocess.run(["osascript", "-e", script], check=True)
+        return
+
+    # Use SMTP
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = from_addr
+    msg["To"] = recipient
+    msg.set_content(f"Attached: {attachment_path.name}")
+
+    with open(attachment_path, "rb") as f:
+        file_data = f.read()
+        msg.add_attachment(
+            file_data,
+            maintype="application",
+            subtype="octet-stream",
+            filename=attachment_path.name
+        )
+
+    with smtplib.SMTP(host, port) as server:
+        server.starttls()
+        server.login(user, password)
+        server.send_message(msg)
 
 def download_single_podcast(rss_url: str, output_dir: Path, run_date: date, downloader: Path, title: str = "") -> subprocess.CompletedProcess:
     command = [sys.executable, str(downloader), rss_url, "-o", str(output_dir), "--episode-date", run_date.isoformat()]

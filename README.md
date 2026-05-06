@@ -36,7 +36,24 @@ cp youtube_subscriptions.example.json youtube_subscriptions.json
 ```
 
 - `local_config.sh`
-  設定本機 `GENSRT_SCRIPT`、`PYTHON_BIN`、`OPENCC_*`
+  設定本機 `GENSRT_SCRIPT`、`PYTHON_BIN`、`OPENCC_*`，以及 **SMTP 寄信設定**（見下文）。
+
+### 寄信方式設定
+
+本專案支援兩種寄信方式：
+
+1. **Apple Mail (預設)**: 透過 AppleScript 驅動系統內建 Mail app。不需額外設定，但需保持 Mail app 登入。
+2. **SMTP (推薦)**: 直接透過伺服器背景寄信，更穩定且不需啟動 Mail app。
+
+若要使用 **iCloud SMTP**，請在 `local_config.sh` 加入：
+```bash
+SMTP_HOST="smtp.mail.me.com"
+SMTP_PORT="587"
+SMTP_USER="你的iCloud信箱"
+SMTP_PASS="你的App專用密碼"
+SMTP_FROM="顯示的寄件者信箱"
+```
+*註：iCloud 密碼必須使用在 appleid.apple.com 申請的「App 專用密碼」。*
 - `recipient_groups.local.json`
   設定本機私有收件人群組
 - `subscriptions.json`
