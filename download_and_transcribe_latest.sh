@@ -124,51 +124,8 @@ if [[ "$SKIP_MAIL" == "1" ]]; then
   exit 0
 fi
 
-mail_success=1
-for recipient in "${MAIL_RECIPIENTS[@]}"; do
-  recipient="$(printf '%s' "$recipient" | xargs)"
-  if [[ -z "$recipient" ]]; then
-    continue
-  fi
-
-  recipient_hash="$(printf '%s' "$recipient" | shasum | awk '{print substr($1,1,12)}')"
-  mail_marker="${attachment_path}.${recipient_hash}.mail-sent"
-
-  if [[ -f "$mail_marker" ]]; then
-    echo "Already sent to $recipient: $(basename "$attachment_path")"
-    continue
-  fi
-
-  if /usr/bin/osascript - "$recipient" "$video_title" "$attachment_path" <<'APPLESCRIPT'
-on run argv
-  set recipientAddress to item 1 of argv
-  set videoTitle to item 2 of argv
-  set attachmentPath to POSIX file (item 3 of argv)
-  set subjectText to "YouTube transcript " & videoTitle
-
-  tell application "Mail"
-    activate
-    set newMessage to make new outgoing message with properties {subject:subjectText, content:"", visible:false}
-    tell newMessage
-      make new to recipient at end of to recipients with properties {address:recipientAddress}
-      make new attachment with properties {file name:attachmentPath} at after the last paragraph
-      send
-    end tell
-  end tell
-end run
-APPLESCRIPT
-  then
-    touch "$mail_marker"
-    echo "Sent to: $recipient"
-  else
-    mail_success=0
-    echo "Failed to send to: $recipient" >&2
-  fi
-done
-
+# 移除舊的 AppleScript 邏輯，改為由呼叫者處理寄信，或是顯示提示
+echo "Mailing should now be handled by Python scripts to avoid opening Mail.app."
 echo "Processed: $audio_path"
 echo "Transcript: $attachment_path"
-
-if [[ "$mail_success" != "1" ]]; then
-  exit 1
-fi
+exit 0

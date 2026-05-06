@@ -33,6 +33,17 @@ from run_registered_youtube import (
     run_command
 )
 
+def load_local_config():
+    config_path = Path(__file__).resolve().parent / "local_config.sh"
+    if config_path.exists():
+        content = config_path.read_text()
+        for line in content.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                value = value.strip().strip('"').strip("'")
+                os.environ[key] = value
+
 @dataclass
 class DailyItem:
     label: str
@@ -70,6 +81,7 @@ def build_items(pod_cfg: Path, yt_cfg: Path, rec_cfg: Path, root: Path) -> list[
     return items
 
 def main() -> int:
+    load_local_config()
     parser = argparse.ArgumentParser(description="Daily pipeline.")
     parser.add_argument("--date", dest="run_date", type=parse_run_date, default=date.today())
     parser.add_argument("--output-root", default="output")
