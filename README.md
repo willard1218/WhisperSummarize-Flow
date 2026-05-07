@@ -88,17 +88,17 @@ SMTP_FROM="顯示的寄件者信箱"
 - `launchd/update_schedule.sh`
   修改每天自動執行時間。
 
-## 專案架構
+## 常用用法
 
-本專案採用模組化設計，確保邏輯的一致性：
+### register_podcast.py
 
-- **核心模組**：`run_registered_podcasts.py` 與 `run_registered_youtube.py` 封裝了各自來源的下載、路徑解析與郵件邏輯。
-- **整合入口**：`run_daily_pipeline.py` 作為主要的自動化入口， import 核心模組的函式並實作「分階段執行」（下載 -> 轉錄 -> 寄信），以提升穩定性。
-- **共用工具**：`recipient_groups.py` 處理收件人群組解析；`convert_transcript_opencc.py` 負責繁簡轉換。
+用法：
 
-## 註冊 podcast
+```bash
+python3 register_podcast.py PODCAST_URL [EMAIL ...] [--recipient-group GROUP] [--config FILE]
+```
 
-註冊一個 podcast，直接綁定本機收件人群組：
+例如直接綁定本機群組：
 
 ```bash
 python3 register_podcast.py \
@@ -106,15 +106,169 @@ python3 register_podcast.py \
   --recipient-group your_group_name
 ```
 
-## 註冊 YouTube 頻道
+例如直接指定收件人：
 
-註冊一個 YouTube 直播頻道，直接綁定本機收件人群組：
+```bash
+python3 register_podcast.py \
+  'PODCAST_URL' \
+  alice@example.com bob@example.com
+```
+
+### register_youtube_channel.py
+
+用法：
+
+```bash
+python3 register_youtube_channel.py CHANNEL_URL [EMAIL ...] [--recipient-group GROUP] [--config FILE]
+```
+
+例如綁定本機群組：
 
 ```bash
 python3 register_youtube_channel.py \
   'https://www.youtube.com/@channelname/streams' \
   --recipient-group your_group_name
 ```
+
+### run_daily_pipeline.py
+
+用法：
+
+```bash
+python3 run_daily_pipeline.py [--date YYYY-MM-DD] [--output-root DIR] [--debug]
+```
+
+- `--date`：指定要處理哪一天，預設是今天
+- `--debug`：只寄給 `DEBUG_RECIPIENT`
+
+例如跑今天全部任務：
+
+```bash
+python3 run_daily_pipeline.py
+```
+
+例如重跑某一天：
+
+```bash
+python3 run_daily_pipeline.py --date 2026-05-07
+```
+
+### run_registered_podcasts.py
+
+用法：
+
+```bash
+python3 run_registered_podcasts.py [--date YYYY-MM-DD] [--output-root DIR] [--debug]
+```
+
+例如只跑 podcast：
+
+```bash
+python3 run_registered_podcasts.py --date 2026-05-07
+```
+
+### run_registered_youtube.py
+
+用法：
+
+```bash
+python3 run_registered_youtube.py [--output-root DIR] [--debug]
+```
+
+例如只跑 YouTube：
+
+```bash
+python3 run_registered_youtube.py
+```
+
+### dump_daily_plan.py
+
+用法：
+
+```bash
+python3 dump_daily_plan.py [--format text|json] [--show-urls] [--show-groups]
+```
+
+例如列出來源網址和群組：
+
+```bash
+python3 dump_daily_plan.py --show-urls --show-groups
+```
+
+### download_latest_podcast.py
+
+用法：
+
+```bash
+python3 download_latest_podcast.py PODCAST_URL [-o DIR] [--episode-date YYYY-MM-DD] [--transcribe-script SCRIPT]
+```
+
+例如抓指定日期那一集：
+
+```bash
+python3 download_latest_podcast.py \
+  'PODCAST_URL' \
+  -o output/tmp \
+  --episode-date 2026-05-07
+```
+
+### download_and_transcribe_latest.sh
+
+用法：
+
+```bash
+./download_and_transcribe_latest.sh CHANNEL_URL [OUTPUT_DIR] [MAIL_RECIPIENTS] [TRANSCRIBE_SCRIPT]
+```
+
+例如抓某個 YouTube 頻道最新一支已結束直播：
+
+```bash
+./download_and_transcribe_latest.sh \
+  'https://www.youtube.com/@channelname/streams' \
+  output/tmp \
+  'alice@example.com,bob@example.com'
+```
+
+### convert_transcript_opencc.py
+
+用法：
+
+```bash
+python3 convert_transcript_opencc.py INPUT_PATH [--output-path FILE] [--config OPENCC_CONFIG]
+```
+
+例如手動把逐字稿轉成繁中：
+
+```bash
+python3 convert_transcript_opencc.py \
+  output/example.srt.txt \
+  --output-path output/example.zh-Hant.srt.txt
+```
+
+### launchd/update_schedule.sh
+
+用法：
+
+```bash
+./launchd/update_schedule.sh HOUR MINUTE
+```
+
+- `HOUR`：24 小時制，範圍 `0-23`
+- `MINUTE`：分鐘，範圍 `0-59`
+
+例如改成每天 `16:00`：
+
+```bash
+./launchd/update_schedule.sh 16 00
+```
+
+## 專案架構
+
+本專案採用模組化設計，確保邏輯的一致性：
+
+- **核心模組**：`run_registered_podcasts.py` 與 `run_registered_youtube.py` 封裝了各自來源的下載、路徑解析與郵件邏輯。
+- **整合入口**：`run_daily_pipeline.py` 作為主要的自動化入口， import 核心模組的函式並實作「分階段執行」（下載 -> 轉錄 -> 寄信），以提升穩定性。
+- **共用工具**：`recipient_groups.py` 處理收件人群組解析；`convert_transcript_opencc.py` 負責繁簡轉換。
 
 ## 執行模式
 
@@ -163,14 +317,6 @@ OPENCC_CONFIG="s2twp.json"
 - `foo.srt.txt` -> `foo.zh-Hant.srt.txt`
 
 預設會用 `s2twp.json`，也就是偏台灣用字的簡轉繁設定。
-
-## 設定每天執行時間
-
-例如改成每天 `16:00`：
-
-```bash
-./launchd/update_schedule.sh 16 00
-```
 
 ## 手動立即執行
 

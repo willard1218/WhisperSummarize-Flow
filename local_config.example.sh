@@ -5,6 +5,7 @@
 # Provide absolute paths if the executables are not in your system PATH
 # GENSRT_SCRIPT="/path/to/gensrt.sh"
 # PYTHON_BIN="/usr/bin/python3"
+# FFMPEG_BIN_DIR="/opt/homebrew/bin"
 OPENCC_TRADITIONALIZE="1"
 OPENCC_CONFIG="s2twp.json"
 DEBUG_RECIPIENT="yourname@example.com"

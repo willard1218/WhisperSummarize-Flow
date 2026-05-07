@@ -42,6 +42,12 @@ if [[ -f "$LOCAL_CONFIG_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$LOCAL_CONFIG_FILE"
 fi
+if [[ -z "${FFMPEG_BIN_DIR:-}" && -x "$HOME/bin/JDownloader 2.0/tools/mac/ffmpeg_10.10+/ffmpeg" ]]; then
+  FFMPEG_BIN_DIR="$HOME/bin/JDownloader 2.0/tools/mac/ffmpeg_10.10+"
+fi
+if [[ -n "${FFMPEG_BIN_DIR:-}" ]]; then
+  export PATH="$FFMPEG_BIN_DIR:$PATH"
+fi
 export GENSRT_SCRIPT="${GENSRT_SCRIPT:-gensrt.sh}"
 export PYTHON_BIN="${PYTHON_BIN:-python3}"
 export RECIPIENT_CONFIG_FILE="${RECIPIENT_CONFIG_FILE:-$BASE_DIR/recipient_groups.local.json}"
