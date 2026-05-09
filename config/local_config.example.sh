@@ -6,16 +6,19 @@
 # GENSRT_SCRIPT="/path/to/gensrt.sh"
 # PYTHON_BIN="/usr/bin/python3"
 # FFMPEG_BIN_DIR="/opt/homebrew/bin"
-OPENCC_TRADITIONALIZE="1"
-OPENCC_CONFIG="s2twp.json"
-DEBUG_RECIPIENT="yourname@example.com"
-
 # Pipeline Stage Toggles (1 to enable, 0 to disable)
 ENABLE_TRANSCRIBE="1"
-ENABLE_TRADITIONALIZE="1"
+ENABLE_TRADITIONALIZE="1"  # Simplified Chinese to Traditional Chinese (OpenCC)
 ENABLE_SUMMARIZE="1"
+ENABLE_OLLAMA="0"          # Use local Ollama for summarization (requires ENABLE_SUMMARIZE="1")
 ENABLE_MAIL="1"
 ENABLE_TELEGRAM="1"
+
+# OpenCC Settings
+OPENCC_CONFIG="s2twp.json"
+
+# Debug / Testing
+DEBUG_RECIPIENT="yourname@example.com"
 
 # SMTP Settings (iCloud Example)
 SMTP_HOST="smtp.mail.me.com"

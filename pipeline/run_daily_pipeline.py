@@ -100,13 +100,12 @@ def main() -> int:
     parser.add_argument("--podcast-config", default="config/subscriptions.json")
     parser.add_argument("--youtube-config", default="config/youtube_subscriptions.json")
     parser.add_argument("--recipient-config", default=os.environ.get("RECIPIENT_CONFIG_FILE", "config/recipient_groups.local.json"))
-    parser.add_argument("--traditionalize-transcript", action="store_true", default=os.environ.get("OPENCC_TRADITIONALIZE", "0") == "1")
+    parser.add_argument("--traditionalize-transcript", dest="enable_traditionalize", action="store_true", default=os.environ.get("ENABLE_TRADITIONALIZE", os.environ.get("OPENCC_TRADITIONALIZE", "0")) == "1")
     parser.add_argument("--opencc-config", default=os.environ.get("OPENCC_CONFIG", "s2twp.json"))
     parser.add_argument("--debug", action="store_true")
     
     # Stage toggles
     parser.add_argument("--enable-transcribe", type=int, default=int(os.environ.get("ENABLE_TRANSCRIBE", "1")))
-    parser.add_argument("--enable-traditionalize", type=int, default=int(os.environ.get("ENABLE_TRADITIONALIZE", "1")))
     parser.add_argument("--enable-summarize", type=int, default=int(os.environ.get("ENABLE_SUMMARIZE", "1")))
     parser.add_argument("--enable-mail", type=int, default=int(os.environ.get("ENABLE_MAIL", "1")))
     parser.add_argument("--enable-telegram", type=int, default=int(os.environ.get("ENABLE_TELEGRAM", "1")))
@@ -192,33 +191,42 @@ def main() -> int:
                 item.transcript_path = transcript_path_for(item.audio_path)
                 if res.returncode == 0 and item.transcript_path.exists(): log_event("transcribe", "ok", time.monotonic()-t_start, item.label, item.transcript_path.name)
                 else: item.failed = True; overall_ok = False; continue
-            
-            item.mail_attachment_path = item.transcript_path
-            if args.enable_traditionalize and args.traditionalize_transcript:
-                if item.transcript_path.name.endswith(".srt.txt"):
-                    hant = item.transcript_path.with_name(item.transcript_path.name[:-8] + ".zh-Hant.srt.txt")
-                    if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
-                        res = run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
-                        if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, hant.name)
-                    if hant.exists(): item.mail_attachment_path = hant
-                
-                txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
-                if txt_path.exists():
-                    txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
-                    if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
-                        res = run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
-                        if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, txt_hant.name)
     else:
-        print("  Transcribe (and traditionalize) disabled. Skipping.")
+        print("  Transcribe execution disabled. Checking for existing files.")
         for item in items:
             if item.audio_path:
                 item.transcript_path = transcript_path_for(item.audio_path)
-                if item.transcript_path and item.transcript_path.exists():
-                    item.mail_attachment_path = item.transcript_path
-                    # Check for hant fallback
-                    if args.traditionalize_transcript:
-                         hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
-                         if hant.exists(): item.mail_attachment_path = hant
+
+    # Post-transcribe: Traditionalize and set mail attachments
+    if args.enable_traditionalize:
+        print("Traditionalize phase: start")
+        for item in items:
+            if not item.transcript_path or not item.transcript_path.exists() or item.failed: continue
+            t_start = time.monotonic()
+            
+            # Convert .srt.txt
+            if item.transcript_path.name.endswith(".srt.txt") and not item.transcript_path.name.endswith(".zh-Hant.srt.txt"):
+                hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
+                if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
+                    res = run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
+                    if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, hant.name)
+            
+            # Convert .txt
+            txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
+            if txt_path.exists() and not txt_path.name.endswith(".zh-Hant.txt"):
+                txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
+                if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
+                    res = run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
+                    if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, txt_hant.name)
+
+    # Set attachment paths
+    for item in items:
+        if not item.transcript_path or not item.transcript_path.exists() or item.failed: continue
+        item.mail_attachment_path = item.transcript_path
+        if args.enable_traditionalize:
+            hant_srt = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
+            if hant_srt.exists():
+                item.mail_attachment_path = hant_srt
 
     log_event("phase_transcribe", "ok", time.monotonic() - start)
 
@@ -226,13 +234,21 @@ def main() -> int:
     start = time.monotonic()
     if args.enable_summarize:
         for item in items:
-            if not item.mail_attachment_path or item.failed: continue
+            if not item.transcript_path or item.failed: continue
             
-            target_txt = item.mail_attachment_path.with_name(item.mail_attachment_path.name.replace(".srt.txt", ".txt"))
-            if not target_txt.exists():
-                target_txt = item.mail_attachment_path.with_name(item.mail_attachment_path.name.replace(".zh-Hant.srt.txt", ".zh-Hant.txt"))
+            # Priority: .zh-Hant.txt -> .txt
+            txt_hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.txt"))
+            txt_plain = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
+            
+            target_txt = None
+            if args.enable_traditionalize and txt_hant.exists():
+                target_txt = txt_hant
+            elif txt_plain.exists():
+                target_txt = txt_plain
+            elif txt_hant.exists():
+                target_txt = txt_hant
                 
-            if target_txt.exists():
+            if target_txt:
                 t_start = time.monotonic()
                 summary_path = summarize_file(target_txt, item.prompt_file)
                 if summary_path and summary_path.exists():

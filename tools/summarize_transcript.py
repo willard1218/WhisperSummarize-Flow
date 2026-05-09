@@ -98,10 +98,14 @@ class OllamaSummarizer(BaseSummarizer):
 
 def get_summarizers() -> List[BaseSummarizer]:
     # Order of preference: Ollama (local) -> Gemini (cloud)
-    return [
-        OllamaSummarizer("qwen2.5:7b"),
-        GeminiSummarizer()
-    ]
+    summarizers = []
+    
+    # Check if Ollama is enabled via environment variable
+    if os.environ.get("ENABLE_OLLAMA", "0") == "1":
+        summarizers.append(OllamaSummarizer("qwen2.5:7b"))
+    
+    summarizers.append(GeminiSummarizer())
+    return summarizers
 
 def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | None:
     print(f"正在摘要: {txt_path.name} ...")
@@ -128,4 +132,3 @@ def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | No
 
     print(f"[FAILED] 摘要失敗 (所有可用模型均失敗): {txt_path.name}")
     return None
-
