@@ -54,6 +54,7 @@ def build_daily_plan(
                 "podcast_url": subscription.get("podcast_url") or "",
                 "rss_url": subscription.get("rss_url") or "",
                 "podcast_title": subscription.get("podcast_title") or "",
+                "prompt_file": subscription.get("prompt_file") or "prompts/default.md",
                 "recipient_groups": recipient_group_names(subscription),
                 "emails": emails,
             }
@@ -67,6 +68,7 @@ def build_daily_plan(
                 "type": "youtube",
                 "order": len(plan) + 1,
                 "channel_url": subscription.get("channel_url") or "",
+                "prompt_file": subscription.get("prompt_file") or "prompts/default.md",
                 "recipient_groups": recipient_group_names(subscription),
                 "emails": emails,
             }
@@ -75,7 +77,7 @@ def build_daily_plan(
     return plan
 
 
-def print_text(plan: list[dict[str, Any]], show_urls: bool, show_groups: bool) -> None:
+def print_text(plan: list[dict[str, Any]], show_urls: bool, show_groups: bool, show_prompts: bool) -> None:
     for item in plan:
         emails = item["emails"]
         recipients = ", ".join(emails) if emails else "(no recipients)"
@@ -92,6 +94,9 @@ def print_text(plan: list[dict[str, Any]], show_urls: bool, show_groups: bool) -
 
         if show_groups and item["recipient_groups"]:
             print(f"  groups: {', '.join(item['recipient_groups'])}")
+            
+        if show_prompts and item.get("prompt_file"):
+            print(f"  prompt_file: {item['prompt_file']}")
 
 
 def main() -> int:
@@ -129,6 +134,11 @@ def main() -> int:
         action="store_true",
         help="Include recipient group names under each item in text output",
     )
+    parser.add_argument(
+        "--show-prompts",
+        action="store_true",
+        help="Include the configured AI prompt file under each item in text output",
+    )
     args = parser.parse_args()
 
     plan = build_daily_plan(
@@ -140,10 +150,13 @@ def main() -> int:
     if args.format == "json":
         print(json.dumps({"daily_plan": plan}, ensure_ascii=False, indent=2))
     else:
-        print_text(plan, show_urls=args.show_urls, show_groups=args.show_groups)
+        print_text(plan, show_urls=args.show_urls, show_groups=args.show_groups, show_prompts=args.show_prompts)
 
     return 0
 
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 if __name__ == "__main__":
     raise SystemExit(main())

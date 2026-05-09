@@ -187,13 +187,13 @@ python3 run_registered_youtube.py
 用法：
 
 ```bash
-python3 dump_daily_plan.py [--format text|json] [--show-urls] [--show-groups]
+python3 dump_daily_plan.py [--format text|json] [--show-urls] [--show-groups] [--show-prompts]
 ```
 
-例如列出來源網址和群組：
+例如列出來源網址和群組、Prompt設定：
 
 ```bash
-python3 dump_daily_plan.py --show-urls --show-groups
+python3 dump_daily_plan.py --show-urls --show-groups --show-prompts
 ```
 
 ### download_latest_podcast.py
