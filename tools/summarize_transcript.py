@@ -123,9 +123,9 @@ def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | No
             summary_text = summarizer.summarize(full_prompt)
             if summary_text:
                 output_md_path.write_text(summary_text, encoding="utf-8")
-                print(f"✅ 摘要完成 (使用 {summarizer.name} 模型): {output_md_path.name}")
+                print(f"[OK] 摘要完成 (使用 {summarizer.name} 模型): {output_md_path.name}")
                 return output_md_path
 
-    print(f"❌ 摘要失敗 (所有可用模型均失敗): {txt_path.name}")
+    print(f"[FAILED] 摘要失敗 (所有可用模型均失敗): {txt_path.name}")
     return None
 
