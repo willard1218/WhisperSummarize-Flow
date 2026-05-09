@@ -276,8 +276,8 @@ python3 convert_transcript_opencc.py \
 本專案採用模組化設計，確保邏輯的一致性：
 
 - **核心模組**：`run_registered_podcasts.py` 與 `run_registered_youtube.py` 封裝了各自來源的下載、路徑解析與郵件邏輯。
-- **整合入口**：`run_daily_pipeline.py` 作為主要的自動化入口， import 核心模組的函式並實作「分階段執行」（下載 -> 轉錄 -> 寄信），以提升穩定性。
-- **共用工具**：`recipient_groups.py` 處理收件人群組解析；`convert_transcript_opencc.py` 負責繁簡轉換。
+- **整合入口**：`run_daily_pipeline.py` 作為主要的自動化入口， import 核心模組的函式並實作「分階段執行」（下載 -> 轉錄 -> 簡轉繁 -> AI 摘要 -> 寄信），以提升穩定性。
+- **共用工具**：`recipient_groups.py` 處理收件人群組解析；`convert_transcript_opencc.py` 負責繁簡轉換；`summarize_transcript.py` 負責呼叫 Gemini CLI 產生摘要。
 
 ## 執行模式
 
@@ -321,23 +321,21 @@ OPENCC_TRADITIONALIZE="1"
 OPENCC_CONFIG="s2twp.json"
 ```
 
-2. daily pipeline 會在轉錄完成後，針對 `.srt.txt` 額外產生繁中版本：
+2. daily pipeline 會在轉錄完成後，針對 `.srt.txt` 和 `.txt` 額外產生繁中版本：
 
 - `foo.srt.txt` -> `foo.zh-Hant.srt.txt`
+- `foo.txt` -> `foo.zh-Hant.txt`
 
 預設會用 `s2twp.json`，也就是偏台灣用字的簡轉繁設定。
 
-## 手動立即執行
+## AI 摘要功能 (Gemini CLI)
 
-立刻手動跑今天全部任務：
+專案內建支援使用 Gemini CLI 自動對繁體中文逐字稿 (`.zh-Hant.txt`) 進行總結，並將 Markdown 格式的摘要直接作為 Email 的內文寄出。
 
-```bash
-./launchd/run_soundon_daily.sh
-```
-mail 的內文寄出。
-
-### 1. 安裝與設定
+### 1. 執行環境與設定
 請確保系統已安裝 `gemini` CLI 工具，且已完成登入認證。
+程式會優先嘗試使用 `gemini-3-pro-preview` 模型以獲得最高品質的摘要。若遇到限制（如 Rate Limit 或文本過長），會自動退回使用 `gemini-3-flash-preview` 模型。
+另外，程式已內建 `--skip-trust` 參數，以確保背景排程 (如 `launchd`) 執行時不受安全提示阻擋。
 
 ### 2. 自訂 Prompt
 由於每個頻道/Podcast 的內容結構不同（如有來賓對談、單純技術分析、有閒聊與 QA 等），你可以在 `prompts/` 資料夾下建立專屬的 Markdown Prompt 檔案（例如 `gooaye.md`, `zhaohua.md`, `youtube_tech.md`）。
@@ -358,6 +356,8 @@ mail 的內文寄出。
 }
 ```
 若未指定 `prompt_file`，系統會預設使用 `prompts/default.md` 進行摘要。
+
+你可以透過 `dump_daily_plan.py --show-prompts` 指令來檢查每個頻道的 Prompt 綁定狀態。
 
 ## 手動立即執行
 
