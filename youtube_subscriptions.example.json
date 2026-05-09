@@ -2,7 +2,8 @@
   "subscriptions": [
     {
       "channel_url": "https://www.youtube.com/@channelname/streams",
-      "recipient_group": "your_group_name"
+      "recipient_group": "your_group_name",
+      "prompt_file": "prompts/youtube_tech.md"
     }
   ]
 }

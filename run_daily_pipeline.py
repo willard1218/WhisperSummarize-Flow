@@ -34,6 +34,8 @@ from run_registered_youtube import (
     run_command
 )
 
+from summarize_transcript import summarize_file
+
 def load_local_config():
     config_path = Path(__file__).resolve().parent / "local_config.sh"
     if config_path.exists():
@@ -52,9 +54,11 @@ class DailyItem:
     source_url: str
     emails: list[str]
     output_dir: Path
+    prompt_file: Path | None = None
     audio_path: Path | None = None
     transcript_path: Path | None = None
     mail_attachment_path: Path | None = None
+    mail_body: str = ""
     title: str = ""
     failed: bool = False
     download_ready: bool = False
@@ -187,6 +191,25 @@ def main() -> int:
                     if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, txt_hant.name)
     log_event("phase_transcribe", "ok", time.monotonic() - start)
 
+    print("Summarize phase: start")
+    start = time.monotonic()
+    for item in items:
+        if not item.mail_attachment_path or item.failed: continue
+        
+        target_txt = item.mail_attachment_path.with_name(item.mail_attachment_path.name.replace(".srt.txt", ".txt"))
+        if not target_txt.exists():
+            target_txt = item.mail_attachment_path.with_name(item.mail_attachment_path.name.replace(".zh-Hant.srt.txt", ".zh-Hant.txt"))
+            
+        if target_txt.exists():
+            t_start = time.monotonic()
+            summary_path = summarize_file(target_txt, item.prompt_file)
+            if summary_path and summary_path.exists():
+                item.mail_body = summary_path.read_text(encoding="utf-8")
+                log_event("summarize", "ok", time.monotonic()-t_start, item.label, summary_path.name)
+            else:
+                log_event("summarize", "failed", time.monotonic()-t_start, item.label)
+    log_event("phase_summarize", "ok", time.monotonic() - start)
+
     print("Mail phase: start")
     start = time.monotonic()
     pending_mail: dict[str, list[tuple[DailyItem, Path]]] = defaultdict(list)
@@ -202,9 +225,14 @@ def main() -> int:
     for email, entries in pending_mail.items():
         attachments = [attachment for _, attachment in entries]
         subject = f"Daily transcripts {subject_date} ({len(attachments)} items)"
+        
+        combined_body = "\n\n=================================\n\n".join(
+            f"# {item.title or item.label}\n\n{item.mail_body}" for item, _ in entries if item.mail_body
+        )
+
         t_start = time.monotonic()
         try:
-            send_mail(email, subject, attachments)
+            send_mail(email, subject, attachments, combined_body)
             for item, attachment in entries:
                 marker_path_for(attachment, email).touch()
                 log_event("mail", "ok", 0, item.label, email)

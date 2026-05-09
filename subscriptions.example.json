@@ -3,7 +3,8 @@
     {
       "podcast_url": "https://player.soundon.fm/p/podcast-uuid",
       "rss_url": "https://feeds.soundon.fm/podcasts/podcast-uuid.xml",
-      "recipient_group": "your_group_name"
+      "recipient_group": "your_group_name",
+      "prompt_file": "prompts/default.md"
     }
   ]
 }

@@ -8,11 +8,12 @@
 目前的設計重點是：
 
 - podcast 跟 YouTube 都用註冊檔管理，不用改程式碼。
-- daily runner 會先下載所有 podcast / YouTube，再集中轉錄，再集中寄信。
+- daily runner 會先下載所有 podcast / YouTube，再集中轉錄、繁簡轉換、AI 摘要，最後集中寄信。
 - `gensrt.sh` 有全域鎖，同一時間只會有一個轉錄在跑。
 - 每次 daily runner 會自動用 `caffeinate` 包住，避免轉錄中途休眠。
 - 每個收件人都會各自留下寄送標記，避免重複寄同一份逐字稿。
-- 如果開啟 `OPENCC_TRADITIONALIZE=1`，轉錄完成後會針對 `.srt.txt` 額外產生一份繁中逐字稿並優先寄出。
+- 如果開啟 `OPENCC_TRADITIONALIZE=1`，轉錄完成後會針對 `.srt.txt` 與 `.txt` 額外產生繁中版本。
+- 支援透過 Gemini CLI 自動為逐字稿產生 Markdown 摘要，並作為信件內文寄出。
 
 ## 需求
 
@@ -251,15 +252,23 @@ python3 convert_transcript_opencc.py \
 
 ```bash
 ./launchd/update_schedule.sh HOUR MINUTE
+./launchd/update_schedule.sh START_HOUR END_HOUR MINUTE
 ```
 
 - `HOUR`：24 小時制，範圍 `0-23`
+- `START_HOUR` / `END_HOUR`：整點重跑區間，範圍 `0-23`
 - `MINUTE`：分鐘，範圍 `0-59`
 
 例如改成每天 `16:00`：
 
 ```bash
 ./launchd/update_schedule.sh 16 00
+```
+
+例如改成每天從 `15:00` 到 `23:00` 每小時跑一次：
+
+```bash
+./launchd/update_schedule.sh 15 23 00
 ```
 
 ## 專案架構
@@ -317,6 +326,38 @@ OPENCC_CONFIG="s2twp.json"
 - `foo.srt.txt` -> `foo.zh-Hant.srt.txt`
 
 預設會用 `s2twp.json`，也就是偏台灣用字的簡轉繁設定。
+
+## 手動立即執行
+
+立刻手動跑今天全部任務：
+
+```bash
+./launchd/run_soundon_daily.sh
+```
+mail 的內文寄出。
+
+### 1. 安裝與設定
+請確保系統已安裝 `gemini` CLI 工具，且已完成登入認證。
+
+### 2. 自訂 Prompt
+由於每個頻道/Podcast 的內容結構不同（如有來賓對談、單純技術分析、有閒聊與 QA 等），你可以在 `prompts/` 資料夾下建立專屬的 Markdown Prompt 檔案（例如 `gooaye.md`, `zhaohua.md`, `youtube_tech.md`）。
+
+### 3. 綁定 Prompt 到頻道
+在註冊頻道的設定檔 (`subscriptions.json` 或 `youtube_subscriptions.json`) 中，加入 `prompt_file` 屬性來指定該頻道要使用的 Prompt 檔案：
+
+```json
+{
+  "subscriptions": [
+    {
+      "podcast_url": "...",
+      "rss_url": "...",
+      "recipient_group": "your_group_name",
+      "prompt_file": "prompts/zhaohua.md"
+    }
+  ]
+}
+```
+若未指定 `prompt_file`，系統會預設使用 `prompts/default.md` 進行摘要。
 
 ## 手動立即執行
 

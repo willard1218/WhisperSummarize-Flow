@@ -63,7 +63,10 @@ RECIPIENT_CONFIG_FILE="${5:-$RECIPIENT_CONFIG_FILE}"
 DAILY_RUNNER="$BASE_DIR/run_daily_pipeline.py"
 PYTHON_BIN="$PYTHON_BIN"
 LOG_FILE="$BASE_DIR/launchd_download_and_transcribe.log"
+STATE_DIR="$BASE_DIR/launchd_state"
+DONE_MARKER="$STATE_DIR/$RUN_DATE.all-downloaded"
 mkdir -p "$OUTPUT_DIR"
+mkdir -p "$STATE_DIR"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
   PYTHON_BIN="$(command -v python3 || true)"
@@ -74,11 +77,29 @@ if [[ -z "$PYTHON_BIN" || ! -x "$PYTHON_BIN" ]]; then
   exit 127
 fi
 
+if [[ -f "$DONE_MARKER" ]]; then
+  {
+    echo "==== $(date '+%Y-%m-%d %H:%M:%S %Z') start ===="
+    echo "Run date $RUN_DATE already completed earlier. Skipping."
+    echo "==== $(date '+%Y-%m-%d %H:%M:%S %Z') done ===="
+  } >>"$LOG_FILE" 2>&1
+  exit 0
+fi
+
 {
   echo "==== $(date '+%Y-%m-%d %H:%M:%S %Z') start ===="
   echo "Using Python: $PYTHON_BIN"
   overall_status=0
-  if "$PYTHON_BIN" "$DAILY_RUNNER" --date "$RUN_DATE" --output-root "$OUTPUT_DIR" --transcribe-script "$TRANSCRIBE_SCRIPT" --podcast-config "$PODCAST_CONFIG_FILE" --youtube-config "$YOUTUBE_CONFIG_FILE" --recipient-config "$RECIPIENT_CONFIG_FILE"; then
+  set +e
+  pipeline_output="$("$PYTHON_BIN" "$DAILY_RUNNER" --date "$RUN_DATE" --output-root "$OUTPUT_DIR" --transcribe-script "$TRANSCRIBE_SCRIPT" --podcast-config "$PODCAST_CONFIG_FILE" --youtube-config "$YOUTUBE_CONFIG_FILE" --recipient-config "$RECIPIENT_CONFIG_FILE" 2>&1)"
+  pipeline_status=$?
+  set -e
+  printf '%s\n' "$pipeline_output"
+  if [[ "$pipeline_output" == *"PIPELINE_ALL_DOWNLOADED=1"* ]]; then
+    : >"$DONE_MARKER"
+    echo "Created done marker: $DONE_MARKER"
+  fi
+  if [[ $pipeline_status -eq 0 ]]; then
     echo "Daily pipeline: done"
   else
     overall_status=1

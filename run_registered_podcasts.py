@@ -65,7 +65,7 @@ def marker_path_for(transcript_path: Path, email: str) -> Path:
     digest = hashlib.sha1(email.encode("utf-8")).hexdigest()[:12]
     return transcript_path.with_name(f"{transcript_path.name}.{digest}.mail-sent")
 
-def send_mail(recipient: str, subject: str, attachment_paths: Path | Iterable[Path]) -> None:
+def send_mail(recipient: str, subject: str, attachment_paths: Path | Iterable[Path], body: str = "") -> None:
     if isinstance(attachment_paths, Path):
         attachments = [attachment_paths]
     else:
@@ -87,12 +87,14 @@ def send_mail(recipient: str, subject: str, attachment_paths: Path | Iterable[Pa
             f'make new attachment with properties {{file name:POSIX file "{path}"}} at after the last paragraph'
             for path in attachments
         )
+        safe_body = body.replace('"', '\\"').replace('\n', '\\n') if body else ""
         script = f'''
 set recipientAddress to "{recipient}"
 set subjectText to "{subject}"
+set bodyText to "{safe_body}"
 tell application "Mail"
   activate
-  set newMessage to make new outgoing message with properties {{subject:subjectText, content:"", visible:false}}
+  set newMessage to make new outgoing message with properties {{subject:subjectText, content:bodyText, visible:false}}
   tell newMessage
     make new to recipient at end of to recipients with properties {{address:recipientAddress}}
     {attachment_lines}
@@ -108,9 +110,13 @@ end tell
     msg["Subject"] = subject
     msg["From"] = from_addr
     msg["To"] = recipient
-    body_lines = ["Attached files:"]
-    body_lines.extend(f"- {path.name}" for path in attachments)
-    msg.set_content("\n".join(body_lines))
+    
+    if body:
+        msg.set_content(body)
+    else:
+        body_lines = ["Attached files:"]
+        body_lines.extend(f"- {path.name}" for path in attachments)
+        msg.set_content("\n".join(body_lines))
 
     for attachment_path in attachments:
         with open(attachment_path, "rb") as f:
