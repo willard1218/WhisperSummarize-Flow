@@ -32,8 +32,9 @@ def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | No
     output_md_path = txt_path.with_name(f"{txt_path.stem}.summary.md")
     
     try:
+        print(f"  嘗試使用 gemini-3-pro-preview 模型...")
         result = subprocess.run(
-            ["gemini", "ask", "請看我輸入的內容並進行摘要"], 
+            ["gemini", "ask", "-m", "gemini-3-pro-preview", "請看我輸入的內容並進行摘要"], 
             input=full_prompt,
             text=True,
             capture_output=True,
@@ -45,6 +46,20 @@ def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | No
         return output_md_path
         
     except subprocess.CalledProcessError as e:
-        print(f"❌ 摘要失敗: {txt_path.name}")
-        print(f"錯誤訊息: {e.stderr}")
-        return None
+        print(f"⚠️ Pro 模型摘要失敗，嘗試退回使用 gemini-3-flash-preview 模型... (原因: {e.stderr.strip()})")
+        try:
+            result = subprocess.run(
+                ["gemini", "ask", "-m", "gemini-3-flash-preview", "請看我輸入的內容並進行摘要"], 
+                input=full_prompt,
+                text=True,
+                capture_output=True,
+                check=True
+            )
+            
+            output_md_path.write_text(result.stdout, encoding="utf-8")
+            print(f"✅ 摘要完成 (使用 Flash 模型): {output_md_path.name}")
+            return output_md_path
+        except subprocess.CalledProcessError as e2:
+            print(f"❌ 摘要失敗 (兩種模型皆失敗): {txt_path.name}")
+            print(f"錯誤訊息: {e2.stderr}")
+            return None
