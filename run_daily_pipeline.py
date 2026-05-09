@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -56,6 +57,7 @@ class DailyItem:
     mail_attachment_path: Path | None = None
     title: str = ""
     failed: bool = False
+    download_ready: bool = False
     messages: list[str] = field(default_factory=list)
 
 def log_event(event: str, status: str, seconds: float, item: str = "", detail: str = "") -> None:
@@ -128,9 +130,11 @@ def main() -> int:
                 res = download_single_podcast(item.source_url, item.output_dir, None, downloader, item.title)
             
             print_completed_process(res)
-            if res.returncode == NO_EPISODE_EXIT_CODE: log_event("download", "skipped", time.monotonic()-t_start, item.label, "no episode")
+            if res.returncode == NO_EPISODE_EXIT_CODE:
+                log_event("download", "skipped", time.monotonic()-t_start, item.label, "no episode")
             elif res.returncode == 0:
                 item.audio_path = parse_audio_path(res.stdout)
+                item.download_ready = item.audio_path is not None
                 log_event("download", "ok", time.monotonic()-t_start, item.label, item.audio_path.name if item.audio_path else "")
             else: item.failed = True; overall_ok = False
         else:
@@ -139,12 +143,17 @@ def main() -> int:
             item.title = latest.get("title", "")
             vid = latest.get("id", "")
             existing = find_youtube_audio(item.output_dir, vid)
-            if existing: item.audio_path = existing; log_event("download", "ok", 0, item.label, existing.name)
+            if existing:
+                item.audio_path = existing
+                item.download_ready = True
+                log_event("download", "ok", 0, item.label, existing.name)
             else:
                 res = download_youtube_video(latest.get("webpage_url", ""), item.output_dir, base_dir / "id.txt")
                 print_completed_process(res)
                 item.audio_path = find_youtube_audio(item.output_dir, vid)
-                if item.audio_path: log_event("download", "ok", time.monotonic()-t_start, item.label, item.audio_path.name)
+                if item.audio_path:
+                    item.download_ready = True
+                    log_event("download", "ok", time.monotonic()-t_start, item.label, item.audio_path.name)
                 else: item.failed = True; overall_ok = False
     log_event("phase_download", "ok", time.monotonic() - start)
 
@@ -162,29 +171,52 @@ def main() -> int:
             else: item.failed = True; overall_ok = False; continue
         
         item.mail_attachment_path = item.transcript_path
-        if args.traditionalize_transcript and item.transcript_path.name.endswith(".srt.txt"):
-            hant = item.transcript_path.with_name(item.transcript_path.name[:-8] + ".zh-Hant.srt.txt")
-            if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
-                res = run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
-                if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, hant.name)
-            if hant.exists(): item.mail_attachment_path = hant
+        if args.traditionalize_transcript:
+            if item.transcript_path.name.endswith(".srt.txt"):
+                hant = item.transcript_path.with_name(item.transcript_path.name[:-8] + ".zh-Hant.srt.txt")
+                if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
+                    res = run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
+                    if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, hant.name)
+                if hant.exists(): item.mail_attachment_path = hant
+            
+            txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
+            if txt_path.exists():
+                txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
+                if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
+                    res = run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
+                    if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, txt_hant.name)
     log_event("phase_transcribe", "ok", time.monotonic() - start)
 
     print("Mail phase: start")
     start = time.monotonic()
+    pending_mail: dict[str, list[tuple[DailyItem, Path]]] = defaultdict(list)
     for item in items:
-        if not item.mail_attachment_path or item.failed: continue
-        prefix = "YouTube" if item.kind == "youtube" else "Podcast"
-        subject = f"{prefix} transcript {item.title or item.audio_path.stem}"
+        if not item.mail_attachment_path or item.failed:
+            continue
         for email in item.emails:
             marker = marker_path_for(item.mail_attachment_path, email)
             if not marker.exists():
-                t_start = time.monotonic()
-                try:
-                    send_mail(email, subject, item.mail_attachment_path)
-                    marker.touch(); log_event("mail", "ok", time.monotonic()-t_start, item.label, email)
-                except Exception: item.failed = True; overall_ok = False
+                pending_mail[email].append((item, item.mail_attachment_path))
+
+    subject_date = args.run_date.isoformat()
+    for email, entries in pending_mail.items():
+        attachments = [attachment for _, attachment in entries]
+        subject = f"Daily transcripts {subject_date} ({len(attachments)} items)"
+        t_start = time.monotonic()
+        try:
+            send_mail(email, subject, attachments)
+            for item, attachment in entries:
+                marker_path_for(attachment, email).touch()
+                log_event("mail", "ok", 0, item.label, email)
+        except Exception:
+            for item, _ in entries:
+                item.failed = True
+            overall_ok = False
+            log_event("mail", "failed", time.monotonic()-t_start, "batch", email)
     log_event("phase_mail", "ok", time.monotonic() - start)
+
+    all_downloaded = all(item.download_ready for item in items)
+    print(f"PIPELINE_ALL_DOWNLOADED={'1' if all_downloaded else '0'}")
 
     return 0 if overall_ok else 1
 

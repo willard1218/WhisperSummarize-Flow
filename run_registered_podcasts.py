@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from datetime import date
 from email.message import EmailMessage
 from pathlib import Path
+from typing import Iterable
 
 from download_latest_podcast import fetch_bytes, sanitize_filename
 from recipient_groups import resolve_emails, load_recipient_groups
@@ -64,7 +65,14 @@ def marker_path_for(transcript_path: Path, email: str) -> Path:
     digest = hashlib.sha1(email.encode("utf-8")).hexdigest()[:12]
     return transcript_path.with_name(f"{transcript_path.name}.{digest}.mail-sent")
 
-def send_mail(recipient: str, subject: str, attachment_path: Path) -> None:
+def send_mail(recipient: str, subject: str, attachment_paths: Path | Iterable[Path]) -> None:
+    if isinstance(attachment_paths, Path):
+        attachments = [attachment_paths]
+    else:
+        attachments = list(attachment_paths)
+    if not attachments:
+        raise ValueError("attachment_paths must not be empty")
+
     host = os.environ.get("SMTP_HOST")
     port = int(os.environ.get("SMTP_PORT", 587))
     user = os.environ.get("SMTP_USER")
@@ -74,18 +82,20 @@ def send_mail(recipient: str, subject: str, attachment_path: Path) -> None:
     if not all([host, user, password]):
         if sys.platform != "darwin":
             raise RuntimeError("SMTP settings are incomplete. Apple Mail fallback is only available on macOS. Please configure SMTP in local_config.sh.")
-        
-        # Fallback to AppleScript if SMTP is not configured
+
+        attachment_lines = "\n".join(
+            f'make new attachment with properties {{file name:POSIX file "{path}"}} at after the last paragraph'
+            for path in attachments
+        )
         script = f'''
 set recipientAddress to "{recipient}"
 set subjectText to "{subject}"
-set attachmentPath to POSIX file "{attachment_path}"
 tell application "Mail"
   activate
   set newMessage to make new outgoing message with properties {{subject:subjectText, content:"", visible:false}}
   tell newMessage
     make new to recipient at end of to recipients with properties {{address:recipientAddress}}
-    make new attachment with properties {{file name:attachmentPath}} at after the last paragraph
+    {attachment_lines}
     send
   end tell
 end tell
@@ -98,16 +108,19 @@ end tell
     msg["Subject"] = subject
     msg["From"] = from_addr
     msg["To"] = recipient
-    msg.set_content(f"Attached: {attachment_path.name}")
+    body_lines = ["Attached files:"]
+    body_lines.extend(f"- {path.name}" for path in attachments)
+    msg.set_content("\n".join(body_lines))
 
-    with open(attachment_path, "rb") as f:
-        file_data = f.read()
-        msg.add_attachment(
-            file_data,
-            maintype="application",
-            subtype="octet-stream",
-            filename=attachment_path.name
-        )
+    for attachment_path in attachments:
+        with open(attachment_path, "rb") as f:
+            file_data = f.read()
+            msg.add_attachment(
+                file_data,
+                maintype="application",
+                subtype="octet-stream",
+                filename=attachment_path.name
+            )
 
     with smtplib.SMTP(host, port) as server:
         server.starttls()
@@ -172,10 +185,16 @@ def main() -> int:
         if not transcript_path.exists(): continue
 
         mail_path = transcript_path
-        if args.traditionalize_transcript and transcript_path.name.endswith(".srt.txt"):
-            hant_path = transcript_path.with_name(transcript_path.name[:-8] + ".zh-Hant.srt.txt")
-            conv = subprocess.run([sys.executable, str(converter_script), str(transcript_path), "--output-path", str(hant_path), "--config", args.opencc_config])
-            if conv.returncode == 0: mail_path = hant_path
+        if args.traditionalize_transcript:
+            if transcript_path.name.endswith(".srt.txt"):
+                hant_path = transcript_path.with_name(transcript_path.name[:-8] + ".zh-Hant.srt.txt")
+                conv = subprocess.run([sys.executable, str(converter_script), str(transcript_path), "--output-path", str(hant_path), "--config", args.opencc_config])
+                if conv.returncode == 0: mail_path = hant_path
+            
+            txt_path = transcript_path.with_name(transcript_path.name.replace(".srt.txt", ".txt"))
+            if txt_path.exists():
+                txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
+                subprocess.run([sys.executable, str(converter_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
 
         subject = f"Podcast transcript {audio_path.stem}"
         for email in emails:

@@ -8,7 +8,9 @@ from pathlib import Path
 def translated_path_for(path: Path) -> Path:
     if path.name.endswith(".srt.txt"):
         return path.with_name(path.name[:-8] + ".zh-Hant.srt.txt")
-    raise ValueError("Only .srt.txt transcripts are supported for OpenCC conversion.")
+    if path.name.endswith(".txt"):
+        return path.with_name(path.name[:-4] + ".zh-Hant.txt")
+    raise ValueError("Only .srt.txt and .txt transcripts are supported for OpenCC conversion.")
 
 
 def main() -> int:
@@ -28,8 +30,8 @@ def main() -> int:
     args = parser.parse_args()
 
     input_path = Path(args.input_path).expanduser().resolve()
-    if not input_path.name.endswith(".srt.txt"):
-        raise SystemExit("Only .srt.txt transcripts are supported for OpenCC conversion.")
+    if not (input_path.name.endswith(".srt.txt") or input_path.name.endswith(".txt")):
+        raise SystemExit("Only .srt.txt and .txt transcripts are supported for OpenCC conversion.")
     if not input_path.exists():
         raise SystemExit(f"Transcript not found: {input_path}")
 

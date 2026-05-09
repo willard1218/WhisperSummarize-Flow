@@ -112,8 +112,19 @@ if [[ "$OPENCC_TRADITIONALIZE" == "1" ]]; then
     else
       echo "Traditional Chinese conversion failed; using original transcript." >&2
     fi
-  else
-    echo "Skipping Traditional Chinese conversion for non-.srt transcript: $(basename "$attachment_path")" >&2
+    if [[ -f "$txt_path" ]]; then
+      traditional_txt_path="${txt_path%.txt}.zh-Hant.txt"
+      echo "Converting to Traditional Chinese: $(basename "$traditional_txt_path")"
+      /usr/bin/python3 "$CONVERTER_SCRIPT" "$txt_path" --output-path "$traditional_txt_path" --config "$OPENCC_CONFIG" || true
+    fi
+  elif [[ "$attachment_path" == *.txt ]]; then
+    traditional_path="${attachment_path%.txt}.zh-Hant.txt"
+    echo "Converting to Traditional Chinese: $(basename "$traditional_path")"
+    if /usr/bin/python3 "$CONVERTER_SCRIPT" "$attachment_path" --output-path "$traditional_path" --config "$OPENCC_CONFIG"; then
+      attachment_path="$traditional_path"
+    else
+      echo "Traditional Chinese conversion failed; using original transcript." >&2
+    fi
   fi
 fi
 
