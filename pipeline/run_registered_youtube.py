@@ -97,7 +97,7 @@ def main() -> int:
                 transcript_path = Path(line.split(": ", 1)[1].strip())
         
         if transcript_path and transcript_path.exists():
-            from run_registered_podcasts import send_mail, marker_path_for
+            from notifier import send_mail, marker_path_for
             subject = f"YouTube transcript {transcript_path.stem.split('__')[0]}"
             for email in emails:
                 marker = marker_path_for(transcript_path, email)

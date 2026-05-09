@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 
 import argparse
-import hashlib
 import json
 import os
 import re
-import smtplib
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from datetime import date
-from email.message import EmailMessage
 from pathlib import Path
 from typing import Iterable
 
@@ -19,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from download_latest_podcast import fetch_bytes, sanitize_filename
 from recipient_groups import resolve_emails, load_recipient_groups
+from notifier import marker_path_for, send_mail
 
 NO_EPISODE_EXIT_CODE = 2
 
@@ -63,78 +61,6 @@ def parse_audio_path(output: str) -> Path | None:
 
 def transcript_path_for(audio_path: Path) -> Path:
     return audio_path.with_suffix("").with_name(audio_path.with_suffix("").name + ".srt.txt")
-
-def marker_path_for(transcript_path: Path, email: str) -> Path:
-    digest = hashlib.sha1(email.encode("utf-8")).hexdigest()[:12]
-    return transcript_path.with_name(f"{transcript_path.name}.{digest}.mail-sent")
-
-def send_mail(recipient: str, subject: str, attachment_paths: Path | Iterable[Path], body: str = "") -> None:
-    if isinstance(attachment_paths, Path):
-        attachments = [attachment_paths]
-    else:
-        attachments = list(attachment_paths)
-    if not attachments:
-        raise ValueError("attachment_paths must not be empty")
-
-    host = os.environ.get("SMTP_HOST")
-    port = int(os.environ.get("SMTP_PORT", 587))
-    user = os.environ.get("SMTP_USER")
-    password = os.environ.get("SMTP_PASS")
-    from_addr = os.environ.get("SMTP_FROM", user)
-
-    if not all([host, user, password]):
-        if sys.platform != "darwin":
-            raise RuntimeError("SMTP settings are incomplete. Apple Mail fallback is only available on macOS. Please configure SMTP in local_config.sh.")
-
-        attachment_lines = "\n".join(
-            f'make new attachment with properties {{file name:POSIX file "{path}"}} at after the last paragraph'
-            for path in attachments
-        )
-        safe_body = body.replace('"', '\\"').replace('\n', '\\n') if body else ""
-        script = f'''
-set recipientAddress to "{recipient}"
-set subjectText to "{subject}"
-set bodyText to "{safe_body}"
-tell application "Mail"
-  activate
-  set newMessage to make new outgoing message with properties {{subject:subjectText, content:bodyText, visible:false}}
-  tell newMessage
-    make new to recipient at end of to recipients with properties {{address:recipientAddress}}
-    {attachment_lines}
-    send
-  end tell
-end tell
-'''
-        subprocess.run(["osascript", "-e", script], check=True)
-        return
-
-    # Use SMTP
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = from_addr
-    msg["To"] = recipient
-    
-    if body:
-        msg.set_content(body)
-    else:
-        body_lines = ["Attached files:"]
-        body_lines.extend(f"- {path.name}" for path in attachments)
-        msg.set_content("\n".join(body_lines))
-
-    for attachment_path in attachments:
-        with open(attachment_path, "rb") as f:
-            file_data = f.read()
-            msg.add_attachment(
-                file_data,
-                maintype="application",
-                subtype="octet-stream",
-                filename=attachment_path.name
-            )
-
-    with smtplib.SMTP(host, port) as server:
-        server.starttls()
-        server.login(user, password)
-        server.send_message(msg)
 
 def download_single_podcast(rss_url: str, output_dir: Path, run_date: date | None, downloader: Path, title: str = "") -> subprocess.CompletedProcess:
     command = [sys.executable, str(downloader), rss_url, "-o", str(output_dir)]

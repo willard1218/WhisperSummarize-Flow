@@ -24,4 +24,4 @@ SMTP_PASS="aaaa-bbbb-cccc-dddd"  # Use App-Specific Password here
 SMTP_FROM="yourname@icloud.com"
 
 # Optional overrides:
-# RECIPIENT_CONFIG_FILE="$HOME/path/to/soundon_rss/recipient_groups.local.json"
+# RECIPIENT_CONFIG_FILE="$HOME/path/to/WhisperSummarize-Flow/config/recipient_groups.local.json"

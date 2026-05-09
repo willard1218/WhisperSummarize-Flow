@@ -1,4 +1,4 @@
-# soundon_rss
+# WhisperSummarize-Flow
 
 這套流程現在支援兩種來源，會每天自動下載、轉逐字稿、再用 Apple Mail 寄出：
 
