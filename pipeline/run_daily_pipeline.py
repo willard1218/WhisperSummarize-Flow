@@ -103,6 +103,13 @@ def main() -> int:
     parser.add_argument("--traditionalize-transcript", action="store_true", default=os.environ.get("OPENCC_TRADITIONALIZE", "0") == "1")
     parser.add_argument("--opencc-config", default=os.environ.get("OPENCC_CONFIG", "s2twp.json"))
     parser.add_argument("--debug", action="store_true")
+    
+    # Stage toggles
+    parser.add_argument("--enable-transcribe", type=int, default=int(os.environ.get("ENABLE_TRANSCRIBE", "1")))
+    parser.add_argument("--enable-traditionalize", type=int, default=int(os.environ.get("ENABLE_TRADITIONALIZE", "1")))
+    parser.add_argument("--enable-summarize", type=int, default=int(os.environ.get("ENABLE_SUMMARIZE", "1")))
+    parser.add_argument("--enable-mail", type=int, default=int(os.environ.get("ENABLE_MAIL", "1")))
+    
     args = parser.parse_args()
 
     base_dir = Path(__file__).resolve().parent.parent
@@ -168,84 +175,103 @@ def main() -> int:
 
     print("Transcribe phase: start")
     start = time.monotonic()
-    for item in items:
-        if not item.audio_path or item.failed: continue
-        t_start = time.monotonic()
-        existing = transcript_path_for(item.audio_path) if item.audio_path.suffix == ".mp3" else None
-        if existing and existing.exists(): item.transcript_path = existing; log_event("transcribe", "ok", 0, item.label, existing.name)
-        else:
-            res = subprocess.run([args.transcribe_script, str(item.audio_path)])
-            item.transcript_path = transcript_path_for(item.audio_path)
-            if res.returncode == 0 and item.transcript_path.exists(): log_event("transcribe", "ok", time.monotonic()-t_start, item.label, item.transcript_path.name)
-            else: item.failed = True; overall_ok = False; continue
-        
-        item.mail_attachment_path = item.transcript_path
-        if args.traditionalize_transcript:
-            if item.transcript_path.name.endswith(".srt.txt"):
-                hant = item.transcript_path.with_name(item.transcript_path.name[:-8] + ".zh-Hant.srt.txt")
-                if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
-                    res = run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
-                    if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, hant.name)
-                if hant.exists(): item.mail_attachment_path = hant
+    if args.enable_transcribe:
+        for item in items:
+            if not item.audio_path or item.failed: continue
+            t_start = time.monotonic()
+            existing = transcript_path_for(item.audio_path) if item.audio_path.suffix == ".mp3" else None
+            if existing and existing.exists(): item.transcript_path = existing; log_event("transcribe", "ok", 0, item.label, existing.name)
+            else:
+                res = subprocess.run([args.transcribe_script, str(item.audio_path)])
+                item.transcript_path = transcript_path_for(item.audio_path)
+                if res.returncode == 0 and item.transcript_path.exists(): log_event("transcribe", "ok", time.monotonic()-t_start, item.label, item.transcript_path.name)
+                else: item.failed = True; overall_ok = False; continue
             
-            txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
-            if txt_path.exists():
-                txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
-                if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
-                    res = run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
-                    if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, txt_hant.name)
+            item.mail_attachment_path = item.transcript_path
+            if args.enable_traditionalize and args.traditionalize_transcript:
+                if item.transcript_path.name.endswith(".srt.txt"):
+                    hant = item.transcript_path.with_name(item.transcript_path.name[:-8] + ".zh-Hant.srt.txt")
+                    if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
+                        res = run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
+                        if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, hant.name)
+                    if hant.exists(): item.mail_attachment_path = hant
+                
+                txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
+                if txt_path.exists():
+                    txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
+                    if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
+                        res = run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
+                        if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, txt_hant.name)
+    else:
+        print("  Transcribe (and traditionalize) disabled. Skipping.")
+        for item in items:
+            if item.audio_path:
+                item.transcript_path = transcript_path_for(item.audio_path)
+                if item.transcript_path and item.transcript_path.exists():
+                    item.mail_attachment_path = item.transcript_path
+                    # Check for hant fallback
+                    if args.traditionalize_transcript:
+                         hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
+                         if hant.exists(): item.mail_attachment_path = hant
+
     log_event("phase_transcribe", "ok", time.monotonic() - start)
 
     print("Summarize phase: start")
     start = time.monotonic()
-    for item in items:
-        if not item.mail_attachment_path or item.failed: continue
-        
-        target_txt = item.mail_attachment_path.with_name(item.mail_attachment_path.name.replace(".srt.txt", ".txt"))
-        if not target_txt.exists():
-            target_txt = item.mail_attachment_path.with_name(item.mail_attachment_path.name.replace(".zh-Hant.srt.txt", ".zh-Hant.txt"))
+    if args.enable_summarize:
+        for item in items:
+            if not item.mail_attachment_path or item.failed: continue
             
-        if target_txt.exists():
-            t_start = time.monotonic()
-            summary_path = summarize_file(target_txt, item.prompt_file)
-            if summary_path and summary_path.exists():
-                item.mail_body = summary_path.read_text(encoding="utf-8")
-                log_event("summarize", "ok", time.monotonic()-t_start, item.label, summary_path.name)
-            else:
-                log_event("summarize", "failed", time.monotonic()-t_start, item.label)
+            target_txt = item.mail_attachment_path.with_name(item.mail_attachment_path.name.replace(".srt.txt", ".txt"))
+            if not target_txt.exists():
+                target_txt = item.mail_attachment_path.with_name(item.mail_attachment_path.name.replace(".zh-Hant.srt.txt", ".zh-Hant.txt"))
+                
+            if target_txt.exists():
+                t_start = time.monotonic()
+                summary_path = summarize_file(target_txt, item.prompt_file)
+                if summary_path and summary_path.exists():
+                    item.mail_body = summary_path.read_text(encoding="utf-8")
+                    log_event("summarize", "ok", time.monotonic()-t_start, item.label, summary_path.name)
+                else:
+                    log_event("summarize", "failed", time.monotonic()-t_start, item.label)
+    else:
+        print("  Summarize disabled. Skipping.")
     log_event("phase_summarize", "ok", time.monotonic() - start)
 
     print("Mail phase: start")
     start = time.monotonic()
-    pending_mail: dict[str, list[tuple[DailyItem, Path]]] = defaultdict(list)
-    for item in items:
-        if not item.mail_attachment_path or item.failed:
-            continue
-        for email in item.emails:
-            marker = marker_path_for(item.mail_attachment_path, email)
-            if not marker.exists():
-                pending_mail[email].append((item, item.mail_attachment_path))
+    if args.enable_mail:
+        pending_mail: dict[str, list[tuple[DailyItem, Path]]] = defaultdict(list)
+        for item in items:
+            if not item.mail_attachment_path or item.failed:
+                continue
+            for email in item.emails:
+                marker = marker_path_for(item.mail_attachment_path, email)
+                if not marker.exists():
+                    pending_mail[email].append((item, item.mail_attachment_path))
 
-    subject_date = args.run_date.isoformat()
-    for email, entries in pending_mail.items():
-        attachments = [attachment for _, attachment in entries]
-        subject = f"Daily transcripts {subject_date} ({len(attachments)} items)"
-        
-        combined_body = "\n\n=================================\n\n".join(
-            f"# {item.title or item.label}\n\n{item.mail_body}" for item, _ in entries if item.mail_body
-        )
+        subject_date = args.run_date.isoformat()
+        for email, entries in pending_mail.items():
+            attachments = [attachment for _, attachment in entries]
+            subject = f"Daily transcripts {subject_date} ({len(attachments)} items)"
+            
+            combined_body = "\n\n=================================\n\n".join(
+                f"# {item.title or item.label}\n\n{item.mail_body}" for item, _ in entries if item.mail_body
+            )
 
-        t_start = time.monotonic()
-        try:
-            send_mail(email, subject, attachments, combined_body)
-            for item, attachment in entries:
-                marker_path_for(attachment, email).touch()
-                log_event("mail", "ok", 0, item.label, email)
-        except Exception:
-            for item, _ in entries:
-                item.failed = True
-            overall_ok = False
-            log_event("mail", "failed", time.monotonic()-t_start, "batch", email)
+            t_start = time.monotonic()
+            try:
+                send_mail(email, subject, attachments, combined_body)
+                for item, attachment in entries:
+                    marker_path_for(attachment, email).touch()
+                    log_event("mail", "ok", 0, item.label, email)
+            except Exception:
+                for item, _ in entries:
+                    item.failed = True
+                overall_ok = False
+                log_event("mail", "failed", time.monotonic()-t_start, "batch", email)
+    else:
+        print("  Mail disabled. Skipping.")
     log_event("phase_mail", "ok", time.monotonic() - start)
 
     all_downloaded = all(item.download_ready for item in items)

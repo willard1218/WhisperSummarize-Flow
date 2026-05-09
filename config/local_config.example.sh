@@ -10,6 +10,12 @@ OPENCC_TRADITIONALIZE="1"
 OPENCC_CONFIG="s2twp.json"
 DEBUG_RECIPIENT="yourname@example.com"
 
+# Pipeline Stage Toggles (1 to enable, 0 to disable)
+ENABLE_TRANSCRIBE="1"
+ENABLE_TRADITIONALIZE="1"
+ENABLE_SUMMARIZE="1"
+ENABLE_MAIL="1"
+
 # SMTP Settings (iCloud Example)
 SMTP_HOST="smtp.mail.me.com"
 SMTP_PORT="587"
