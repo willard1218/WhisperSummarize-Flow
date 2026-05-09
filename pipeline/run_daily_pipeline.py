@@ -24,7 +24,6 @@ from run_registered_podcasts import (
     resolve_podcast_title,
     transcript_path_for,
     download_single_podcast,
-    marker_path_for,
     send_mail,
     NO_EPISODE_EXIT_CODE
 )
@@ -38,6 +37,7 @@ from run_registered_youtube import (
 )
 
 from summarize_transcript import summarize_file
+from notifier import get_notifiers
 
 def load_local_config():
     config_path = Path(__file__).resolve().parent.parent / "config" / "local_config.sh"
@@ -109,6 +109,7 @@ def main() -> int:
     parser.add_argument("--enable-traditionalize", type=int, default=int(os.environ.get("ENABLE_TRADITIONALIZE", "1")))
     parser.add_argument("--enable-summarize", type=int, default=int(os.environ.get("ENABLE_SUMMARIZE", "1")))
     parser.add_argument("--enable-mail", type=int, default=int(os.environ.get("ENABLE_MAIL", "1")))
+    parser.add_argument("--enable-telegram", type=int, default=int(os.environ.get("ENABLE_TELEGRAM", "1")))
     
     args = parser.parse_args()
 
@@ -128,6 +129,11 @@ def main() -> int:
         print(f"DEBUG MODE ENABLED: All emails will be redirected to {debug_email}")
         for item in items:
             item.emails = [debug_email]
+        
+        debug_telegram = os.environ.get("DEBUG_TELEGRAM_CHAT_ID")
+        if debug_telegram:
+            print(f"DEBUG MODE ENABLED: Telegram messages will be redirected to {debug_telegram}")
+            os.environ["TELEGRAM_CHAT_ID"] = debug_telegram
 
     if not items:
         print("No subscriptions found.")
@@ -238,41 +244,20 @@ def main() -> int:
         print("  Summarize disabled. Skipping.")
     log_event("phase_summarize", "ok", time.monotonic() - start)
 
-    print("Mail phase: start")
+    print("Notification phase: start")
     start = time.monotonic()
-    if args.enable_mail:
-        pending_mail: dict[str, list[tuple[DailyItem, Path]]] = defaultdict(list)
-        for item in items:
-            if not item.mail_attachment_path or item.failed:
-                continue
-            for email in item.emails:
-                marker = marker_path_for(item.mail_attachment_path, email)
-                if not marker.exists():
-                    pending_mail[email].append((item, item.mail_attachment_path))
-
-        subject_date = args.run_date.isoformat()
-        for email, entries in pending_mail.items():
-            attachments = [attachment for _, attachment in entries]
-            subject = f"Daily transcripts {subject_date} ({len(attachments)} items)"
-            
-            combined_body = "\n\n=================================\n\n".join(
-                f"# {item.title or item.label}\n\n{item.mail_body}" for item, _ in entries if item.mail_body
-            )
-
-            t_start = time.monotonic()
-            try:
-                send_mail(email, subject, attachments, combined_body)
-                for item, attachment in entries:
-                    marker_path_for(attachment, email).touch()
-                    log_event("mail", "ok", 0, item.label, email)
-            except Exception:
-                for item, _ in entries:
-                    item.failed = True
-                overall_ok = False
-                log_event("mail", "failed", time.monotonic()-t_start, "batch", email)
-    else:
-        print("  Mail disabled. Skipping.")
-    log_event("phase_mail", "ok", time.monotonic() - start)
+    
+    notifiers = get_notifiers()
+    active_any = False
+    for notifier in notifiers:
+        if notifier.is_enabled(args):
+            active_any = True
+            notifier.notify(items, args)
+    
+    if not active_any:
+        print("  All notifications disabled. Skipping.")
+    
+    log_event("phase_notification", "ok", time.monotonic() - start)
 
     all_downloaded = all(item.download_ready for item in items)
     print(f"PIPELINE_ALL_DOWNLOADED={'1' if all_downloaded else '0'}")

@@ -39,12 +39,25 @@ cp config/youtube_subscriptions.example.json config/youtube_subscriptions.json
 - `config/local_config.sh`
   設定本機 `GENSRT_SCRIPT`、`PYTHON_BIN`、`OPENCC_*`，以及 **SMTP 寄信設定**（見下文）。
 
-### 寄信方式設定
+### 通知與寄信方式設定
 
-本專案支援兩種寄信方式：
+本專案支援多種通知方式：
 
-1. **Apple Mail (預設)**: 透過 AppleScript 驅動系統內建 Mail app。不需額外設定，但需保持 Mail app 登入。
+1. **Telegram (推薦)**: 每日執行完畢後，發送彙整通知。
 2. **SMTP (推薦)**: 直接透過伺服器背景寄信，更穩定且不需啟動 Mail app。
+3. **Apple Mail (預設)**: 透過 AppleScript 驅動系統內建 Mail app。
+
+#### Telegram 設定
+
+在 `config/local_config.sh` 加入：
+```bash
+ENABLE_TELEGRAM="1"
+TELEGRAM_BOT_TOKEN="你的BotToken"
+TELEGRAM_CHAT_ID="你的ChatID"
+```
+*註：這會發送當天所有處理項目的成功/失敗彙整訊息。*
+
+#### SMTP 設定
 
 若要使用 **iCloud SMTP**，請在 `config/local_config.sh` 加入：
 ```bash
