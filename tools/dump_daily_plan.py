@@ -105,18 +105,18 @@ def main() -> int:
     )
     parser.add_argument(
         "--podcast-config",
-        default="subscriptions.json",
-        help="Path to podcast subscriptions JSON (default: subscriptions.json)",
+        default="config/subscriptions.json",
+        help="Path to podcast subscriptions JSON (default: config/subscriptions.json)",
     )
     parser.add_argument(
         "--youtube-config",
-        default="youtube_subscriptions.json",
-        help="Path to YouTube subscriptions JSON (default: youtube_subscriptions.json)",
+        default="config/youtube_subscriptions.json",
+        help="Path to YouTube subscriptions JSON (default: config/youtube_subscriptions.json)",
     )
     parser.add_argument(
         "--recipient-config",
-        default="recipient_groups.local.json",
-        help="Path to local recipient groups JSON (default: recipient_groups.local.json)",
+        default="config/recipient_groups.local.json",
+        help="Path to local recipient groups JSON (default: config/recipient_groups.local.json)",
     )
     parser.add_argument(
         "--format",

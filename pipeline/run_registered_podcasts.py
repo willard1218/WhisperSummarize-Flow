@@ -14,6 +14,9 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Iterable
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from download_latest_podcast import fetch_bytes, sanitize_filename
 from recipient_groups import resolve_emails, load_recipient_groups
 

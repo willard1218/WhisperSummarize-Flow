@@ -14,12 +14,13 @@ launchd_download_and_transcribe.log
 launchd_stdout.log
 launchd_stderr.log
 id.txt
+bench_*.txt
 
 # Local private recipient config
-recipient_groups.local.json
-local_config.sh
-subscriptions.json
-youtube_subscriptions.json
+config/recipient_groups.local.json
+config/local_config.sh
+config/subscriptions.json
+config/youtube_subscriptions.json
 
 # Local system configurations
 *.plist

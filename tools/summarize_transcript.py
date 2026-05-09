@@ -49,7 +49,7 @@ def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | No
         print(f"⚠️ Pro 模型摘要失敗，嘗試退回使用 gemini-3-flash-preview 模型... (原因: {e.stderr.strip()})")
         try:
             result = subprocess.run(
-                ["gemini", "ask", "-m", "gemini-3-flash-preview", "請看我輸入的內容並進行摘要"], 
+                ["gemini", "ask", "--skip-trust", "-m", "gemini-3-flash-preview", "請看我輸入的內容並進行摘要"], 
                 input=full_prompt,
                 text=True,
                 capture_output=True,

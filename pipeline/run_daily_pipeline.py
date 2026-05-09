@@ -12,6 +12,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from recipient_groups import load_recipient_groups, resolve_emails
 from run_registered_podcasts import (
     load_subscriptions as load_podcast_subs,
@@ -37,7 +40,7 @@ from run_registered_youtube import (
 from summarize_transcript import summarize_file
 
 def load_local_config():
-    config_path = Path(__file__).resolve().parent / "local_config.sh"
+    config_path = Path(__file__).resolve().parent.parent / "config" / "local_config.sh"
     if config_path.exists():
         content = config_path.read_text()
         for line in content.splitlines():
@@ -80,10 +83,12 @@ def build_items(pod_cfg: Path, yt_cfg: Path, rec_cfg: Path, root: Path) -> list[
     for i, sub in enumerate(load_podcast_subs(pod_cfg), 1):
         rss = sub.get("rss_url", "").strip()
         title = sub.get("podcast_title", "").strip() or (resolve_podcast_title(rss) if rss else "")
-        items.append(DailyItem(f"Podcast {i}", "podcast", sub.get("podcast_url", rss), resolve_emails(sub, groups), root / make_podcast_output_dir_name(rss, title), title=title))
+        prompt_file = Path(sub["prompt_file"]) if sub.get("prompt_file") else None
+        items.append(DailyItem(f"Podcast {i}", "podcast", sub.get("podcast_url", rss), resolve_emails(sub, groups), root / make_podcast_output_dir_name(rss, title), prompt_file=prompt_file, title=title))
     for i, sub in enumerate(load_youtube_subs(yt_cfg), 1):
         url = sub.get("channel_url", "").strip()
-        items.append(DailyItem(f"YouTube {i}" if i > 1 else "YouTube", "youtube", url, resolve_emails(sub, groups), root / make_channel_slug(url)))
+        prompt_file = Path(sub["prompt_file"]) if sub.get("prompt_file") else None
+        items.append(DailyItem(f"YouTube {i}" if i > 1 else "YouTube", "youtube", url, resolve_emails(sub, groups), root / make_channel_slug(url), prompt_file=prompt_file))
     return items
 
 def main() -> int:
@@ -92,18 +97,18 @@ def main() -> int:
     parser.add_argument("--date", dest="run_date", type=parse_run_date, default=date.today())
     parser.add_argument("--output-root", default="output")
     parser.add_argument("--transcribe-script", default=os.environ.get("GENSRT_SCRIPT", "gensrt.sh"))
-    parser.add_argument("--podcast-config", default="subscriptions.json")
-    parser.add_argument("--youtube-config", default="youtube_subscriptions.json")
-    parser.add_argument("--recipient-config", default=os.environ.get("RECIPIENT_CONFIG_FILE", "recipient_groups.local.json"))
+    parser.add_argument("--podcast-config", default="config/subscriptions.json")
+    parser.add_argument("--youtube-config", default="config/youtube_subscriptions.json")
+    parser.add_argument("--recipient-config", default=os.environ.get("RECIPIENT_CONFIG_FILE", "config/recipient_groups.local.json"))
     parser.add_argument("--traditionalize-transcript", action="store_true", default=os.environ.get("OPENCC_TRADITIONALIZE", "0") == "1")
     parser.add_argument("--opencc-config", default=os.environ.get("OPENCC_CONFIG", "s2twp.json"))
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
-    base_dir = Path(__file__).resolve().parent
+    base_dir = Path(__file__).resolve().parent.parent
     root = Path(args.output_root).expanduser().resolve()
-    conv_script = base_dir / "convert_transcript_opencc.py"
-    downloader = base_dir / "download_latest_podcast.py"
+    conv_script = base_dir / "tools" / "convert_transcript_opencc.py"
+    downloader = base_dir / "pipeline" / "download_latest_podcast.py"
 
     items = build_items(Path(args.podcast_config).expanduser().resolve(), Path(args.youtube_config).expanduser().resolve(), Path(args.recipient_config).expanduser().resolve(), root)
     

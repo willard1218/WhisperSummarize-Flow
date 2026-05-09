@@ -40,12 +40,12 @@ else
     exit 1
   fi
 fi
-
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-base_dir="$(cd "$script_dir/.." && pwd)"
-source_plist="$base_dir/launchd/com.willard.soundon-rss-daily.plist"
+base_dir="$(dirname "$script_dir")"
+
+source_plist="$base_dir/schedule/com.willard.soundon-rss-daily.plist"
 target_plist="$HOME/Library/LaunchAgents/com.willard.soundon-rss-daily.plist"
-runner_path="$base_dir/launchd/run_soundon_daily.sh"
+runner_path="$base_dir/schedule/run_soundon_daily.sh"
 label="com.willard.soundon-rss-daily"
 uid="$(id -u)"
 

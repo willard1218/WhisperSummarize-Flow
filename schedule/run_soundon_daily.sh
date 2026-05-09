@@ -37,7 +37,7 @@ trap close_own_terminal_window EXIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
-LOCAL_CONFIG_FILE="$BASE_DIR/local_config.sh"
+LOCAL_CONFIG_FILE="$BASE_DIR/config/local_config.sh"
 if [[ -f "$LOCAL_CONFIG_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$LOCAL_CONFIG_FILE"
@@ -50,17 +50,17 @@ if [[ -n "${FFMPEG_BIN_DIR:-}" ]]; then
 fi
 export GENSRT_SCRIPT="${GENSRT_SCRIPT:-gensrt.sh}"
 export PYTHON_BIN="${PYTHON_BIN:-python3}"
-export RECIPIENT_CONFIG_FILE="${RECIPIENT_CONFIG_FILE:-$BASE_DIR/recipient_groups.local.json}"
+export RECIPIENT_CONFIG_FILE="${RECIPIENT_CONFIG_FILE:-$BASE_DIR/config/recipient_groups.local.json}"
 export OPENCC_TRADITIONALIZE="${OPENCC_TRADITIONALIZE:-0}"
 export OPENCC_CONFIG="${OPENCC_CONFIG:-s2twp.json}"
 
 RUN_DATE="${1:-$(date '+%Y-%m-%d')}"
 OUTPUT_DIR="${2:-$BASE_DIR/output}"
 TRANSCRIBE_SCRIPT="$GENSRT_SCRIPT"
-PODCAST_CONFIG_FILE="${3:-$BASE_DIR/subscriptions.json}"
-YOUTUBE_CONFIG_FILE="${4:-$BASE_DIR/youtube_subscriptions.json}"
+PODCAST_CONFIG_FILE="${3:-$BASE_DIR/config/subscriptions.json}"
+YOUTUBE_CONFIG_FILE="${4:-$BASE_DIR/config/youtube_subscriptions.json}"
 RECIPIENT_CONFIG_FILE="${5:-$RECIPIENT_CONFIG_FILE}"
-DAILY_RUNNER="$BASE_DIR/run_daily_pipeline.py"
+DAILY_RUNNER="$BASE_DIR/pipeline/run_daily_pipeline.py"
 PYTHON_BIN="$PYTHON_BIN"
 LOG_FILE="$BASE_DIR/launchd_download_and_transcribe.log"
 STATE_DIR="$BASE_DIR/launchd_state"

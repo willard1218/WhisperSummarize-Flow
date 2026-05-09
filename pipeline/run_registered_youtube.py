@@ -8,6 +8,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from recipient_groups import resolve_emails, load_recipient_groups
 
 def load_subscriptions(path: Path) -> list[dict]:
