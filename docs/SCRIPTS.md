@@ -28,3 +28,4 @@ python3 tools/register_youtube_channel.py 'URL' --recipient-group 'GROUP'
 - `tools/dump_daily_plan.py`: 預覽當日執行計畫。
 - `schedule/update_schedule.sh`: 修改 `launchd` 排程時間。
 - `pipeline/download_and_transcribe_latest.sh`: 單獨處理特定頻道的最新影片。
+- `gensrt.sh`: 核心轉錄引擎，負責呼叫 Whisper 並處理內容重複檢查。

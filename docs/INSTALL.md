@@ -15,5 +15,6 @@
 
 - **Apple Mail**: (macOS 專用) 已登入且可正常寄信的 Mail app。
 - **SMTP**: (推薦) 如果不想依賴 Mail app，需備妥 SMTP 伺服器資訊（如 iCloud, Gmail）。
-- **逐字稿腳本**: 需要可執行的 `gensrt.sh` 及其相應環境。
+- **逐字稿腳本**: 專案內附 `gensrt.sh`，需依賴 `whisper.cpp` 的 `main` 執行檔與模型檔案 (`.bin`)。
 - **Gemini CLI**: 用於自動生成 AI 摘要。
+

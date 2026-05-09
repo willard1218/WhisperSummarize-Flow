@@ -38,5 +38,8 @@ cp config/youtube_subscriptions.example.json config/youtube_subscriptions.json
 ### 2. `config/recipient_groups.local.json`
 定義收件人群組。此檔案已被 `.gitignore` 忽略，請放心存放私密 Email。
 
-### 3. `config/subscriptions.json` & `config/youtube_subscriptions.json`
-管理 Podcast 與 YouTube 的訂閱清單。
+### 4. `gensrt.sh` 轉錄設定
+`gensrt.sh` 會讀取以下環境變數，請在 `config/local_config.sh` 中設定：
+- `FFMPEG_BIN`: `ffmpeg` 執行檔路徑 (預設: `ffmpeg`)。
+- `WHISPER_BIN`: `whisper.cpp` 的 `main` 程式路徑 (預設: `main`)。
+- `WHISPER_MODEL`: `whisper.cpp` 的模型檔案路徑 (預設: `models/ggml-large-v3.bin`)。
