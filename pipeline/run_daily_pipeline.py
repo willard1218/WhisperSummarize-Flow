@@ -76,70 +76,117 @@ class BasePipelineStage:
         if detail: parts.append(f'detail="{detail}"')
         print(" ".join(parts))
 
+# --- OCP Downloader Architecture ---
+
+class BaseDownloader:
+    """Base class for URL-specific download logic."""
+    def can_handle(self, item: DailyItem) -> bool:
+        raise NotImplementedError
+    
+    def download(self, item: DailyItem, context: PipelineContext) -> bool:
+        """Returns True if download succeeded, False otherwise."""
+        raise NotImplementedError
+
+    def log_event(self, status: str, seconds: float, item_label: str, detail: str = ""):
+        parts = ["EVENT", "download", f"status={status}", f"seconds={seconds:.2f}", f'item="{item_label}"']
+        if detail: parts.append(f'detail="{detail}"')
+        print(" ".join(parts))
+
+class YouTubeDownloader(BaseDownloader):
+    def can_handle(self, item: DailyItem) -> bool:
+        return item.kind == "youtube"
+    
+    def download(self, item: DailyItem, context: PipelineContext) -> bool:
+        t_start = time.monotonic()
+        is_direct_video = "watch?v=" in item.source_url or "youtu.be/" in item.source_url
+        
+        if is_direct_video:
+            res = download_youtube_video(item.source_url, item.output_dir, BASE_DIR / "id.txt")
+            if res.stdout: print(res.stdout, end="")
+            vid_match = re.search(r"v=([a-zA-Z0-9_-]+)", item.source_url) or re.search(r"be/([a-zA-Z0-9_-]+)", item.source_url)
+            vid = vid_match.group(1) if vid_match else None
+            if vid: item.audio_path = find_youtube_audio(item.output_dir, vid)
+        else:
+            latest = resolve_youtube_latest(item.source_url)
+            if not latest: return False
+            item.title = latest.get("title", "")
+            vid = latest.get("id", "")
+            existing = find_youtube_audio(item.output_dir, vid)
+            if existing:
+                item.audio_path = existing
+                item.download_ready = True
+                self.log_event("ok", 0, item.label, existing.name)
+                return True
+            res = download_youtube_video(latest.get("webpage_url", ""), item.output_dir, BASE_DIR / "id.txt")
+            if res.stdout: print(res.stdout, end="")
+            item.audio_path = find_youtube_audio(item.output_dir, vid)
+        
+        if item.audio_path:
+            item.download_ready = True
+            self.log_event("ok", time.monotonic()-t_start, item.label, item.audio_path.name)
+            return True
+        return False
+
+class PodcastDownloader(BaseDownloader):
+    def can_handle(self, item: DailyItem) -> bool:
+        return item.kind == "podcast"
+    
+    def download(self, item: DailyItem, context: PipelineContext) -> bool:
+        t_start = time.monotonic()
+        downloader_bin = BASE_DIR / "pipeline" / "download_latest_podcast.py"
+        
+        # Determine if we use specific date or latest
+        run_date = context.args.run_date
+        # Special case: in ad-hoc mode with a specific episode URL, we don't want a date filter
+        if "/episodes/" in item.source_url:
+            run_date = None
+
+        res = download_single_podcast(item.source_url, item.output_dir, run_date, downloader_bin, item.title)
+        
+        # Fallback for debug mode
+        if res.returncode == NO_EPISODE_EXIT_CODE and context.args.debug:
+            print(f"Debug mode fallback: Fetching latest episode for {item.label} regardless of date")
+            res = download_single_podcast(item.source_url, item.output_dir, None, downloader_bin, item.title)
+        
+        if res.stdout: print(res.stdout, end="")
+        
+        if res.returncode == NO_EPISODE_EXIT_CODE:
+            self.log_event("skipped", time.monotonic()-t_start, item.label, "no episode")
+            return True # Not a failure
+        elif res.returncode == 0:
+            item.audio_path = parse_audio_path(res.stdout)
+            item.download_ready = item.audio_path is not None
+            if item.audio_path:
+                self.log_event("ok", time.monotonic()-t_start, item.label, item.audio_path.name)
+            return True
+        
+        return False
+
 class DownloadStage(BasePipelineStage):
     def run(self, context: PipelineContext) -> None:
         print("Download phase: start")
         start = time.monotonic()
-        downloader = BASE_DIR / "pipeline" / "download_latest_podcast.py"
+        
+        # Discover all downloader implementations
+        downloaders = [cls() for cls in BaseDownloader.__subclasses__()]
         
         for item in context.items:
             item.output_dir.mkdir(parents=True, exist_ok=True)
-            t_start = time.monotonic()
-            if item.kind == "podcast":
-                res = download_single_podcast(item.source_url, item.output_dir, context.args.run_date, downloader, item.title)
-                if res.returncode == NO_EPISODE_EXIT_CODE and context.args.debug:
-                    print(f"Debug mode fallback: Fetching latest episode for {item.label} regardless of date")
-                    res = download_single_podcast(item.source_url, item.output_dir, None, downloader, item.title)
-                
-                if res.stdout: print(res.stdout, end="")
-                if res.returncode == NO_EPISODE_EXIT_CODE:
-                    self.log_event("download", "skipped", time.monotonic()-t_start, item.label, "no episode")
-                elif res.returncode == 0:
-                    item.audio_path = parse_audio_path(res.stdout)
-                    item.download_ready = item.audio_path is not None
-                    self.log_event("download", "ok", time.monotonic()-t_start, item.label, item.audio_path.name if item.audio_path else "")
-                else: 
-                    item.failed = True
-                    context.overall_ok = False
-            else:
-                # YouTube handling
-                is_direct_video = "watch?v=" in item.source_url or "youtu.be/" in item.source_url
-                
-                if is_direct_video:
-                    # For direct video, we don't resolve latest, we just download
-                    res = download_youtube_video(item.source_url, item.output_dir, BASE_DIR / "id.txt")
-                    if res.stdout: print(res.stdout, end="")
-                    # Try to extract ID for finding file
-                    vid_match = re.search(r"v=([a-zA-Z0-9_-]+)", item.source_url) or re.search(r"be/([a-zA-Z0-9_-]+)", item.source_url)
-                    vid = vid_match.group(1) if vid_match else None
-                    if vid:
-                        item.audio_path = find_youtube_audio(item.output_dir, vid)
-                else:
-                    # Resolve latest from channel
-                    latest = resolve_youtube_latest(item.source_url)
-                    if not latest: 
+            handled = False
+            for d in downloaders:
+                if d.can_handle(item):
+                    if d.download(item, context):
+                        handled = True
+                    else:
                         item.failed = True
                         context.overall_ok = False
-                        continue
-                    item.title = latest.get("title", "")
-                    vid = latest.get("id", "")
-                    existing = find_youtube_audio(item.output_dir, vid)
-                    if existing:
-                        item.audio_path = existing
-                        item.download_ready = True
-                        self.log_event("download", "ok", 0, item.label, existing.name)
-                        continue
-                    else:
-                        res = download_youtube_video(latest.get("webpage_url", ""), item.output_dir, BASE_DIR / "id.txt")
-                        if res.stdout: print(res.stdout, end="")
-                        item.audio_path = find_youtube_audio(item.output_dir, vid)
+                    break
+            
+            if not handled and not item.failed:
+                print(f"  [Error] No downloader found for URL: {item.source_url}")
+                item.failed = True
+                context.overall_ok = False
                 
-                if item.audio_path:
-                    item.download_ready = True
-                    self.log_event("download", "ok", time.monotonic()-t_start, item.label, item.audio_path.name)
-                else: 
-                    item.failed = True
-                    context.overall_ok = False
         self.log_event("phase_download", "ok", time.monotonic() - start)
 
 class TranscribeStage(BasePipelineStage):

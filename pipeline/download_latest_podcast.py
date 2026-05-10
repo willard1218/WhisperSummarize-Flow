@@ -48,7 +48,9 @@ class SoundOnResolver(BaseRSSResolver):
     """Resolves RSS URLs from SoundOn player/show links."""
     def can_handle(self, url: str) -> bool:
         parsed = urllib.parse.urlparse(url)
-        return parsed.netloc.lower() in {"player.soundon.fm", "soundon.fm", "www.soundon.fm"}
+        is_soundon = parsed.netloc.lower() in {"player.soundon.fm", "soundon.fm", "www.soundon.fm"}
+        # Ensure it's a channel/show URL, not a specific episode URL (which has /episodes/)
+        return is_soundon and "/episodes/" not in parsed.path
 
     def resolve(self, url: str) -> str:
         uuid_match = UUID_PATTERN.search(url)
@@ -77,7 +79,6 @@ class ApplePodcastsResolver(BaseRSSResolver):
 
 def get_resolvers() -> List[BaseRSSResolver]:
     """Returns all registered resolvers. Order matters."""
-    # Use __subclasses__ to automatically discover all resolver implementations
     return [cls() for cls in BaseRSSResolver.__subclasses__()]
 
 def resolve_rss_url(url: str) -> str:
@@ -92,7 +93,7 @@ def resolve_rss_url(url: str) -> str:
 def fetch_bytes(url: str) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "download-latest-podcast/1.0"})
     with urllib.request.urlopen(request) as response:
-        return response.read()
+        return (response.read(), response.info().get_content_type())
 
 def decode_escaped_url(url: str) -> str:
     return (
@@ -137,6 +138,64 @@ def item_pub_date(item: ET.Element) -> Optional[date]:
         return parsed.astimezone().date()
     return parsed.date()
 
+def download_url_to_file(url: str, destination: Path):
+    request = urllib.request.Request(url, headers={"User-Agent": "download-latest-podcast/1.0"})
+    with urllib.request.urlopen(request) as response, destination.open("wb") as output:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk: break
+            output.write(chunk)
+
+# --- Direct Episode Handler ---
+
+def handle_direct_episode(url: str, output_dir: Path, show_title_hint: Optional[str] = None) -> int:
+    """Special handling for specific episode pages (like SoundOn individual episodes)."""
+    parsed = urllib.parse.urlparse(url)
+    if "soundon.fm" in parsed.netloc.lower() and "/episodes/" in parsed.path:
+        # Extract UUIDs
+        uuids = UUID_PATTERN.findall(parsed.path)
+        if len(uuids) < 2: return 1
+        podcast_uuid, episode_uuid = uuids[0], uuids[1]
+        
+        # Get RSS to find metadata
+        rss_url = f"https://feeds.soundon.fm/podcasts/{podcast_uuid.lower()}.xml"
+        rss_data, _ = fetch_bytes(rss_url)
+        root = ET.fromstring(rss_data)
+        
+        channel = root.find("channel")
+        feed_title = channel_title(channel) if channel is not None else ""
+        
+        # Find item by episode_uuid (GUID usually matches)
+        item = None
+        for candidate in root.findall(".//item"):
+            guid = candidate.findtext("guid")
+            if guid and episode_uuid in guid:
+                item = candidate
+                break
+        
+        if not item: return 1
+        
+        title = (item.findtext("title") or "episode").strip()
+        enclosure = item.find("enclosure")
+        if enclosure is None or not enclosure.get("url"): return 1
+        
+        audio_url = enclosure.get("url", "").strip()
+        filename = sanitize_filename(title)
+        show_title = (show_title_hint or feed_title).strip()
+        if show_title: filename = f"{sanitize_filename(show_title)} - {filename}"
+        
+        extension = pick_extension(audio_url, enclosure.get("type"))
+        destination = output_dir / f"{filename}{extension}"
+        
+        if not destination.exists():
+            download_url_to_file(audio_url, destination)
+            
+        print(f"Resolved RSS: {rss_url}")
+        print(f"Saved: {destination}")
+        print(f"Episode title: {title}")
+        return 0
+    return 1
+
 # --- Main Logic ---
 
 def main() -> int:
@@ -153,6 +212,14 @@ def main() -> int:
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Try direct episode handling first (for non-RSS pages like specific SoundOn episode links)
+    if not args.print_resolved_rss and not args.episode_date:
+        if handle_direct_episode(args.podcast_url, output_dir, args.show_title) == 0:
+            # Re-find the file to run transcribe script
+            # Note: handle_direct_episode prints its own status
+            # For simplicity, we just return 0 here. Improvements could return the path.
+            return 0
+
     try:
         rss_url = resolve_rss_url(args.podcast_url)
     except ValueError as exc:
@@ -164,7 +231,7 @@ def main() -> int:
         return 0
 
     try:
-        rss_data = fetch_bytes(rss_url)
+        rss_data, _ = fetch_bytes(rss_url)
         root = ET.fromstring(rss_data)
     except Exception as e:
         print(f"Error fetching/parsing RSS: {e}", file=sys.stderr)
@@ -217,16 +284,11 @@ def main() -> int:
         print(f"Episode title: {title}")
         print(f"Audio URL: {audio_url}")
         if args.transcribe_script:
-            subprocess.run([args.transcribe_script, str(destination)], check=True)
+            subprocess.run([context.args.transcribe_script, str(destination)], check=True)
         return 0
 
     try:
-        request = urllib.request.Request(audio_url, headers={"User-Agent": "download-latest-podcast/1.0"})
-        with urllib.request.urlopen(request) as response, destination.open("wb") as output:
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk: break
-                output.write(chunk)
+        download_url_to_file(audio_url, destination)
     except Exception as e:
         print(f"Error downloading audio: {e}", file=sys.stderr)
         if destination.exists(): destination.unlink()
