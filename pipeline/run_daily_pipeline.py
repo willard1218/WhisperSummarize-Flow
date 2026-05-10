@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -101,28 +102,44 @@ class DownloadStage(BasePipelineStage):
                     item.failed = True
                     context.overall_ok = False
             else:
-                latest = resolve_youtube_latest(item.source_url)
-                if not latest: 
-                    item.failed = True
-                    context.overall_ok = False
-                    continue
-                item.title = latest.get("title", "")
-                vid = latest.get("id", "")
-                existing = find_youtube_audio(item.output_dir, vid)
-                if existing:
-                    item.audio_path = existing
-                    item.download_ready = True
-                    self.log_event("download", "ok", 0, item.label, existing.name)
-                else:
-                    res = download_youtube_video(latest.get("webpage_url", ""), item.output_dir, BASE_DIR / "id.txt")
+                # YouTube handling
+                is_direct_video = "watch?v=" in item.source_url or "youtu.be/" in item.source_url
+                
+                if is_direct_video:
+                    # For direct video, we don't resolve latest, we just download
+                    res = download_youtube_video(item.source_url, item.output_dir, BASE_DIR / "id.txt")
                     if res.stdout: print(res.stdout, end="")
-                    item.audio_path = find_youtube_audio(item.output_dir, vid)
-                    if item.audio_path:
-                        item.download_ready = True
-                        self.log_event("download", "ok", time.monotonic()-t_start, item.label, item.audio_path.name)
-                    else: 
+                    # Try to extract ID for finding file
+                    vid_match = re.search(r"v=([a-zA-Z0-9_-]+)", item.source_url) or re.search(r"be/([a-zA-Z0-9_-]+)", item.source_url)
+                    vid = vid_match.group(1) if vid_match else None
+                    if vid:
+                        item.audio_path = find_youtube_audio(item.output_dir, vid)
+                else:
+                    # Resolve latest from channel
+                    latest = resolve_youtube_latest(item.source_url)
+                    if not latest: 
                         item.failed = True
                         context.overall_ok = False
+                        continue
+                    item.title = latest.get("title", "")
+                    vid = latest.get("id", "")
+                    existing = find_youtube_audio(item.output_dir, vid)
+                    if existing:
+                        item.audio_path = existing
+                        item.download_ready = True
+                        self.log_event("download", "ok", 0, item.label, existing.name)
+                        continue
+                    else:
+                        res = download_youtube_video(latest.get("webpage_url", ""), item.output_dir, BASE_DIR / "id.txt")
+                        if res.stdout: print(res.stdout, end="")
+                        item.audio_path = find_youtube_audio(item.output_dir, vid)
+                
+                if item.audio_path:
+                    item.download_ready = True
+                    self.log_event("download", "ok", time.monotonic()-t_start, item.label, item.audio_path.name)
+                else: 
+                    item.failed = True
+                    context.overall_ok = False
         self.log_event("phase_download", "ok", time.monotonic() - start)
 
 class TranscribeStage(BasePipelineStage):
@@ -253,9 +270,36 @@ def load_local_config():
                 value = value.strip().strip('"').strip("'")
                 os.environ[key] = value
 
-def build_items(pod_cfg: Path, yt_cfg: Path, rec_cfg: Path, root: Path) -> List[DailyItem]:
-    groups = load_recipient_groups(rec_cfg)
+def build_items(args, root: Path) -> List[DailyItem]:
+    groups = load_recipient_groups(Path(args.recipient_config).expanduser().resolve())
     items: list[DailyItem] = []
+    
+    # Ad-hoc single URL mode
+    if args.url:
+        emails = resolve_emails({"recipient_group": args.recipient_group}, groups)
+        # Identify kind
+        kind = "youtube" if "youtube.com" in args.url or "youtu.be" in args.url else "podcast"
+        
+        output_dir = root / "adhoc"
+        if kind == "youtube":
+            # For ad-hoc youtube, we don't have a slug yet, use video ID if possible
+            vid_match = re.search(r"v=([a-zA-Z0-9_-]+)", args.url) or re.search(r"be/([a-zA-Z0-9_-]+)", args.url)
+            vid = vid_match.group(1) if vid_match else "unknown"
+            output_dir = root / f"adhoc_yt_{vid}"
+        
+        items.append(DailyItem(
+            label="Ad-hoc Task", 
+            kind=kind, 
+            source_url=args.url, 
+            emails=emails, 
+            output_dir=output_dir
+        ))
+        return items
+
+    # Standard subscription mode
+    pod_cfg = Path(args.podcast_config).expanduser().resolve()
+    yt_cfg = Path(args.youtube_config).expanduser().resolve()
+    
     for i, sub in enumerate(load_podcast_subs(pod_cfg), 1):
         rss = sub.get("rss_url", "").strip()
         title = sub.get("podcast_title", "").strip() or (resolve_podcast_title(rss) if rss else "")
@@ -270,6 +314,8 @@ def build_items(pod_cfg: Path, yt_cfg: Path, rec_cfg: Path, root: Path) -> List[
 def main() -> int:
     load_local_config()
     parser = argparse.ArgumentParser(description="Daily pipeline.")
+    parser.add_argument("--url", help="Ad-hoc URL to process (YouTube video or Podcast RSS/Page)")
+    parser.add_argument("--recipient-group", default="all", help="Recipient group for ad-hoc task")
     parser.add_argument("--date", dest="run_date", type=parse_run_date, default=date.today())
     parser.add_argument("--output-root", default="output")
     parser.add_argument("--transcribe-script", default=os.environ.get("GENSRT_SCRIPT", "gensrt.sh"))
@@ -289,12 +335,7 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(args.output_root).expanduser().resolve()
 
-    items = build_items(
-        Path(args.podcast_config).expanduser().resolve(), 
-        Path(args.youtube_config).expanduser().resolve(), 
-        Path(args.recipient_config).expanduser().resolve(), 
-        root
-    )
+    items = build_items(args, root)
     
     if args.debug:
         debug_email = os.environ.get("DEBUG_RECIPIENT")
