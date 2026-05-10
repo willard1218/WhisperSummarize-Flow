@@ -108,6 +108,22 @@ def get_summarizers() -> List[BaseSummarizer]:
     return summarizers
 
 def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | None:
+    output_md_path = txt_path.with_name(f"{txt_path.stem}.summary.md")
+    
+    # Check for prompt template path
+    template_path = prompt_file if prompt_file and prompt_file.exists() else Path("prompts/default.md")
+    
+    # Cache check: if summary exists and is newer than both the transcript and the prompt
+    if output_md_path.exists():
+        is_newer_than_txt = output_md_path.stat().st_mtime >= txt_path.stat().st_mtime
+        is_newer_than_prompt = True
+        if template_path.exists():
+            is_newer_than_prompt = output_md_path.stat().st_mtime >= template_path.stat().st_mtime
+            
+        if is_newer_than_txt and is_newer_than_prompt:
+            print(f"摘要已存在且為最新，跳過 AI 執行: {output_md_path.name}")
+            return output_md_path
+
     print(f"正在摘要: {txt_path.name} ...")
 
     transcript_content = txt_path.read_text(encoding="utf-8")
@@ -115,11 +131,9 @@ def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | No
     if prompt_file and prompt_file.exists():
         template = prompt_file.read_text(encoding="utf-8")
     else:
-        default_path = Path("prompts/default.md")
-        template = default_path.read_text(encoding="utf-8") if default_path.exists() else DEFAULT_PROMPT_TEMPLATE
+        template = template_path.read_text(encoding="utf-8") if template_path.exists() else DEFAULT_PROMPT_TEMPLATE
 
     full_prompt = template.replace("{transcript_content}", transcript_content)
-    output_md_path = txt_path.with_name(f"{txt_path.stem}.summary.md")
 
     summarizers = get_summarizers()
     for summarizer in summarizers:
