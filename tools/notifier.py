@@ -22,7 +22,7 @@ def marker_path_for(transcript_path: Path, email: str) -> Path:
 
 # Original functions maintained for backward compatibility (e.g., run_registered_podcasts.py)
 def send_mail(recipient: str, subject: str, attachment_paths: Path | Iterable[Path], body: str = "") -> None:
-    """Sends an email with optional body and attachments, using SMTP or Apple Mail fallback."""
+    """Sends an email with optional body and attachments using SMTP."""
     if isinstance(attachment_paths, Path):
         attachments = [attachment_paths]
     else:
@@ -37,30 +37,7 @@ def send_mail(recipient: str, subject: str, attachment_paths: Path | Iterable[Pa
     from_addr = os.environ.get("SMTP_FROM", user)
 
     if not all([host, user, password]):
-        if sys.platform != "darwin":
-            raise RuntimeError("SMTP settings are incomplete. Apple Mail fallback is only available on macOS. Please configure SMTP in local_config.sh.")
-
-        attachment_lines = "\n".join(
-            f'make new attachment with properties {{file name:POSIX file "{path}"}} at after the last paragraph'
-            for path in attachments
-        )
-        safe_body = body.replace('"', '\\"').replace('\n', '\\n') if body else ""
-        script = f'''
-set recipientAddress to "{recipient}"
-set subjectText to "{subject}"
-set bodyText to "{safe_body}"
-tell application "Mail"
-  activate
-  set newMessage to make new outgoing message with properties {{subject:subjectText, content:bodyText, visible:false}}
-  tell newMessage
-    make new to recipient at end of to recipients with properties {{address:recipientAddress}}
-    {attachment_lines}
-    send
-  end tell
-end tell
-'''
-        subprocess.run(["osascript", "-e", script], check=True)
-        return
+        raise RuntimeError("SMTP settings are incomplete. Please configure SMTP_HOST, SMTP_USER, and SMTP_PASS in local_config.sh.")
 
     # Use SMTP
     msg = EmailMessage()
