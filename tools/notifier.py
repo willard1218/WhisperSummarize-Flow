@@ -189,11 +189,14 @@ class TelegramNotifier(BaseNotifier):
 
         try:
             # 1. Summary Report
-            summary_lines = [f"[Summary] Daily Pipeline Summary ({args.run_date}):"]
-            for item in items:
-                status = "[OK]" if (item.download_ready and not item.failed) else "[FAILED]" if item.failed else "[SKIPPED]"
-                summary_lines.append(f"{status} {item.title or item.label}")
-            send_telegram_msg("\n".join(summary_lines))
+            # Only send the summary list if there's more than one processed item
+            # to avoid redundancy when there's only one update.
+            if len(processed_items) > 1:
+                summary_lines = [f"[Summary] Daily Pipeline Summary ({args.run_date}):"]
+                for item in items:
+                    status = "[OK]" if (item.download_ready and not item.failed) else "[FAILED]" if item.failed else "[SKIPPED]"
+                    summary_lines.append(f"{status} {item.title or item.label}")
+                send_telegram_msg("\n".join(summary_lines))
 
             # 2. Detailed summaries
             for item in items:
@@ -201,7 +204,9 @@ class TelegramNotifier(BaseNotifier):
                     marker = marker_path_for(item.mail_attachment_path, chat_id or "telegram")
                     if not marker.exists():
                         time.sleep(1)
-                        msg = f"[Detail] # {item.title or item.label}\n\n{item.mail_body}"
+                        # If we skipped the summary list, add a prefix to the detailed message
+                        prefix = f"[Summary] {args.run_date}\n" if len(processed_items) == 1 else ""
+                        msg = f"{prefix}[Detail] # {item.title or item.label}\n\n{item.mail_body}"
                         send_telegram_msg(msg)
                         marker.touch()
             
