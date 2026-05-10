@@ -206,8 +206,15 @@ class TelegramNotifier(BaseNotifier):
 
 # Registry of available notifiers
 def get_notifiers() -> List[BaseNotifier]:
-    return [
-        MailNotifier(),
-        TelegramNotifier()
-        # To add LINE: return [MailNotifier(), TelegramNotifier(), LineNotifier()]
-    ]
+    """
+    Dynamically discovers and returns instances of all non-abstract Notifier classes.
+    This follows the Open-Closed Principle: adding a new notifier only requires 
+    defining a new class that inherits from BaseNotifier.
+    """
+    notifiers = []
+    for cls in BaseNotifier.__subclasses__():
+        try:
+            notifiers.append(cls())
+        except Exception as e:
+            print(f"Error instantiating notifier {cls.__name__}: {e}")
+    return notifiers
