@@ -248,7 +248,7 @@ def main() -> int:
             elif txt_hant.exists():
                 target_txt = txt_hant
                 
-            if target_txt:
+            if target_txt.exists():
                 t_start = time.monotonic()
                 summary_path = summarize_file(target_txt, item.prompt_file)
                 if summary_path and summary_path.exists():

@@ -125,30 +125,25 @@ def traditionalize_text(text: str) -> str:
         print(f"  [OpenCC] 轉換摘要失敗 (將保留原樣): {e}")
         return text
 
-def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> List[Path]:
+def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | None:
+    output_md_path = txt_path.with_name(f"{txt_path.stem}.summary.md")
     # Check for prompt template path
     template_path = prompt_file if prompt_file and prompt_file.exists() else Path("prompts/default.md")
     
+    # Cache check: if summary exists and is newer than both the transcript and the prompt
+    if output_md_path.exists():
+        is_newer_than_txt = output_md_path.stat().st_mtime >= txt_path.stat().st_mtime
+        is_newer_than_prompt = True
+        if template_path.exists():
+            is_newer_than_prompt = output_md_path.stat().st_mtime >= template_path.stat().st_mtime
+            
+        if is_newer_than_txt and is_newer_than_prompt:
+            print(f"摘要已存在且為最新，跳過 AI 執行: {output_md_path.name}")
+            return output_md_path
+
     summarizers = get_summarizers()
-    summary_paths = []
-
     for summarizer in summarizers:
-        output_md_path = txt_path.with_name(f"{txt_path.stem}.{summarizer.name}.summary.md")
-        
-        # Cache check
-        skip_ai = False
-        if output_md_path.exists():
-            is_newer_than_txt = output_md_path.stat().st_mtime >= txt_path.stat().st_mtime
-            is_newer_than_prompt = True
-            if template_path.exists():
-                is_newer_than_prompt = output_md_path.stat().st_mtime >= template_path.stat().st_mtime
-                
-            if is_newer_than_txt and is_newer_than_prompt:
-                print(f"摘要已存在 ({summarizer.name})，跳過 AI 執行: {output_md_path.name}")
-                summary_paths.append(output_md_path)
-                skip_ai = True
-
-        if not skip_ai and summarizer.is_available():
+        if summarizer.is_available():
             print(f"正在摘要 ({summarizer.name}): {txt_path.name} ...")
             transcript_content = txt_path.read_text(encoding="utf-8")
 
@@ -164,11 +159,7 @@ def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> List[Path
                 final_text = traditionalize_text(summary_text)
                 output_md_path.write_text(final_text, encoding="utf-8")
                 print(f"[OK] 摘要完成 (使用 {summarizer.name} 模型): {output_md_path.name}")
-                summary_paths.append(output_md_path)
-            else:
-                print(f"[FAILED] {summarizer.name} 摘要失敗")
+                return output_md_path
 
-    if not summary_paths:
-        print(f"[FAILED] 摘要失敗 (所有可用模型均失敗): {txt_path.name}")
-        
-    return summary_paths
+    print(f"[FAILED] 摘要失敗 (所有可用模型均失敗): {txt_path.name}")
+    return None
