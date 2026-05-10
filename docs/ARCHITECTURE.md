@@ -7,7 +7,8 @@
 - **單一職責 (SRP)**: 下載、轉錄、摘要、通知均由獨立模組負責。
 - **開閉原則 (OCP)**: 
   - **Pipeline Stages**: 管線流程由多個 `BasePipelineStage` 組成，增加新流程只需新增類別，無需修改主循環。
-  - **RSS Resolvers**: 支援多平台下載（SoundOn, Apple Podcasts），透過繼承 `BaseRSSResolver` 即可擴充。
+  - **Downloader Plugins**: 支援多樣化的網址模式（頻道網址、單一影片/集數網址），透過繼承 `BaseDownloader` 即可擴充下載邏輯，無需改動管線核心。
+  - **RSS Resolvers**: 支援多平台 RSS 解析（SoundOn, Apple Podcasts），透過繼承 `BaseRSSResolver` 即可擴充。
   - **Notifiers**: 通知管道（SMTP, Telegram）採用動態發現機制，繼承 `BaseNotifier` 即自動生效。
   - **Summarizers**: 摘要模型（Gemini, Ollama）動態註冊，支援優先序切換。
 - **依賴反轉 (DIP)**: 高層管線邏輯依賴於抽象介面，不直接依賴具體的 AI 模型或通知服務。
