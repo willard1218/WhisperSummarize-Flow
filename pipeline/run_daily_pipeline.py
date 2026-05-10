@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
 import os
 import subprocess
 import sys
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import List
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Setup paths
+BASE_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BASE_DIR / "tools"))
+sys.path.insert(0, str(BASE_DIR / "pipeline"))
 
 from recipient_groups import load_recipient_groups, resolve_emails
 from run_registered_podcasts import (
@@ -24,7 +24,6 @@ from run_registered_podcasts import (
     resolve_podcast_title,
     transcript_path_for,
     download_single_podcast,
-    send_mail,
     NO_EPISODE_EXIT_CODE
 )
 from run_registered_youtube import (
@@ -35,20 +34,10 @@ from run_registered_youtube import (
     download_youtube_video,
     run_command
 )
-
 from summarize_transcript import summarize_file
 from notifier import get_notifiers
 
-def load_local_config():
-    config_path = Path(__file__).resolve().parent.parent / "config" / "local_config.sh"
-    if config_path.exists():
-        content = config_path.read_text()
-        for line in content.splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, value = line.split("=", 1)
-                value = value.strip().strip('"').strip("'")
-                os.environ[key] = value
+# --- Data Models ---
 
 @dataclass
 class DailyItem:
@@ -67,17 +56,204 @@ class DailyItem:
     download_ready: bool = False
     messages: list[str] = field(default_factory=list)
 
-def log_event(event: str, status: str, seconds: float, item: str = "", detail: str = "") -> None:
-    parts = ["EVENT", event, f"status={status}", f"seconds={seconds:.2f}"]
-    if item: parts.append(f'item="{item}"')
-    if detail: parts.append(f'detail="{detail}"')
-    print(" ".join(parts))
+# --- OCP Pipeline Architecture ---
 
-def print_completed_process(result: subprocess.CompletedProcess[str]) -> None:
-    if result.stdout: print(result.stdout, end="")
-    if result.stderr: print(result.stderr, end="", file=sys.stderr)
+class PipelineContext:
+    def __init__(self, args, items: List[DailyItem]):
+        self.args = args
+        self.items = items
+        self.overall_ok = True
 
-def build_items(pod_cfg: Path, yt_cfg: Path, rec_cfg: Path, root: Path) -> list[DailyItem]:
+class BasePipelineStage:
+    """Base class for all pipeline processing stages."""
+    def run(self, context: PipelineContext) -> None:
+        raise NotImplementedError
+
+    def log_event(self, event: str, status: str, seconds: float, item: str = "", detail: str = "") -> None:
+        parts = ["EVENT", event, f"status={status}", f"seconds={seconds:.2f}"]
+        if item: parts.append(f'item="{item}"')
+        if detail: parts.append(f'detail="{detail}"')
+        print(" ".join(parts))
+
+class DownloadStage(BasePipelineStage):
+    def run(self, context: PipelineContext) -> None:
+        print("Download phase: start")
+        start = time.monotonic()
+        downloader = BASE_DIR / "pipeline" / "download_latest_podcast.py"
+        
+        for item in context.items:
+            item.output_dir.mkdir(parents=True, exist_ok=True)
+            t_start = time.monotonic()
+            if item.kind == "podcast":
+                res = download_single_podcast(item.source_url, item.output_dir, context.args.run_date, downloader, item.title)
+                if res.returncode == NO_EPISODE_EXIT_CODE and context.args.debug:
+                    print(f"Debug mode fallback: Fetching latest episode for {item.label} regardless of date")
+                    res = download_single_podcast(item.source_url, item.output_dir, None, downloader, item.title)
+                
+                if res.stdout: print(res.stdout, end="")
+                if res.returncode == NO_EPISODE_EXIT_CODE:
+                    self.log_event("download", "skipped", time.monotonic()-t_start, item.label, "no episode")
+                elif res.returncode == 0:
+                    item.audio_path = parse_audio_path(res.stdout)
+                    item.download_ready = item.audio_path is not None
+                    self.log_event("download", "ok", time.monotonic()-t_start, item.label, item.audio_path.name if item.audio_path else "")
+                else: 
+                    item.failed = True
+                    context.overall_ok = False
+            else:
+                latest = resolve_youtube_latest(item.source_url)
+                if not latest: 
+                    item.failed = True
+                    context.overall_ok = False
+                    continue
+                item.title = latest.get("title", "")
+                vid = latest.get("id", "")
+                existing = find_youtube_audio(item.output_dir, vid)
+                if existing:
+                    item.audio_path = existing
+                    item.download_ready = True
+                    self.log_event("download", "ok", 0, item.label, existing.name)
+                else:
+                    res = download_youtube_video(latest.get("webpage_url", ""), item.output_dir, BASE_DIR / "id.txt")
+                    if res.stdout: print(res.stdout, end="")
+                    item.audio_path = find_youtube_audio(item.output_dir, vid)
+                    if item.audio_path:
+                        item.download_ready = True
+                        self.log_event("download", "ok", time.monotonic()-t_start, item.label, item.audio_path.name)
+                    else: 
+                        item.failed = True
+                        context.overall_ok = False
+        self.log_event("phase_download", "ok", time.monotonic() - start)
+
+class TranscribeStage(BasePipelineStage):
+    def run(self, context: PipelineContext) -> None:
+        print("Transcribe phase: start")
+        start = time.monotonic()
+        if context.args.enable_transcribe:
+            for item in context.items:
+                if not item.audio_path or item.failed: continue
+                t_start = time.monotonic()
+                existing = transcript_path_for(item.audio_path) if item.audio_path.suffix == ".mp3" else None
+                if existing and existing.exists(): 
+                    item.transcript_path = existing
+                    self.log_event("transcribe", "ok", 0, item.label, existing.name)
+                else:
+                    res = subprocess.run([context.args.transcribe_script, str(item.audio_path)])
+                    item.transcript_path = transcript_path_for(item.audio_path)
+                    if res.returncode == 0 and item.transcript_path.exists(): 
+                        self.log_event("transcribe", "ok", time.monotonic()-t_start, item.label, item.transcript_path.name)
+                    else: 
+                        item.failed = True
+                        context.overall_ok = False
+        else:
+            print("  Transcribe execution disabled. Checking for existing files.")
+            for item in context.items:
+                if item.audio_path:
+                    item.transcript_path = transcript_path_for(item.audio_path)
+        self.log_event("phase_transcribe", "ok", time.monotonic() - start)
+
+class TraditionalizeStage(BasePipelineStage):
+    def run(self, context: PipelineContext) -> None:
+        if not context.args.enable_traditionalize:
+            return
+            
+        print("Traditionalize phase: start")
+        start = time.monotonic()
+        conv_script = BASE_DIR / "tools" / "convert_transcript_opencc.py"
+        
+        for item in context.items:
+            if not item.transcript_path or not item.transcript_path.exists() or item.failed: continue
+            t_start = time.monotonic()
+            
+            # Convert .srt.txt
+            if item.transcript_path.name.endswith(".srt.txt") and not item.transcript_path.name.endswith(".zh-Hant.srt.txt"):
+                hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
+                if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
+                    res = run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", context.args.opencc_config])
+                    if res.returncode == 0: self.log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, hant.name)
+            
+            # Convert .txt
+            txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
+            if txt_path.exists() and not txt_path.name.endswith(".zh-Hant.txt"):
+                txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
+                if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
+                    res = run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", context.args.opencc_config])
+                    if res.returncode == 0: self.log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, txt_hant.name)
+
+        # Update attachment paths to use Traditional Chinese if available
+        for item in context.items:
+            if not item.transcript_path or not item.transcript_path.exists() or item.failed: continue
+            item.mail_attachment_path = item.transcript_path
+            hant_srt = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
+            if hant_srt.exists():
+                item.mail_attachment_path = hant_srt
+        
+        self.log_event("phase_traditionalize", "ok", time.monotonic() - start)
+
+class SummarizeStage(BasePipelineStage):
+    def run(self, context: PipelineContext) -> None:
+        if not context.args.enable_summarize:
+            print("  Summarize disabled. Skipping.")
+            return
+            
+        print("Summarize phase: start")
+        start = time.monotonic()
+        for item in context.items:
+            if not item.transcript_path or item.failed: continue
+            
+            # Priority: .zh-Hant.txt -> .txt
+            txt_hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.txt"))
+            txt_plain = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
+            
+            target_txt = None
+            if context.args.enable_traditionalize and txt_hant.exists():
+                target_txt = txt_hant
+            elif txt_plain.exists():
+                target_txt = txt_plain
+            elif txt_hant.exists():
+                target_txt = txt_hant
+                
+            if target_txt and target_txt.exists():
+                t_start = time.monotonic()
+                summary_path = summarize_file(target_txt, item.prompt_file)
+                if summary_path and summary_path.exists():
+                    item.mail_body = summary_path.read_text(encoding="utf-8")
+                    self.log_event("summarize", "ok", time.monotonic()-t_start, item.label, summary_path.name)
+                else:
+                    self.log_event("summarize", "failed", time.monotonic()-t_start, item.label)
+        self.log_event("phase_summarize", "ok", time.monotonic() - start)
+
+class NotificationStage(BasePipelineStage):
+    def run(self, context: PipelineContext) -> None:
+        print("Notification phase: start")
+        start = time.monotonic()
+        
+        notifiers = get_notifiers()
+        active_any = False
+        for notifier in notifiers:
+            if notifier.is_enabled(context.args):
+                active_any = True
+                notifier.notify(context.items, context.args)
+        
+        if not active_any:
+            print("  All notifications disabled. Skipping.")
+        
+        self.log_event("phase_notification", "ok", time.monotonic() - start)
+
+# --- Configuration & Setup ---
+
+def load_local_config():
+    config_path = BASE_DIR / "config" / "local_config.sh"
+    if config_path.exists():
+        content = config_path.read_text()
+        for line in content.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                value = value.strip().strip('"').strip("'")
+                os.environ[key] = value
+
+def build_items(pod_cfg: Path, yt_cfg: Path, rec_cfg: Path, root: Path) -> List[DailyItem]:
     groups = load_recipient_groups(rec_cfg)
     items: list[DailyItem] = []
     for i, sub in enumerate(load_podcast_subs(pod_cfg), 1):
@@ -100,7 +276,7 @@ def main() -> int:
     parser.add_argument("--podcast-config", default="config/subscriptions.json")
     parser.add_argument("--youtube-config", default="config/youtube_subscriptions.json")
     parser.add_argument("--recipient-config", default=os.environ.get("RECIPIENT_CONFIG_FILE", "config/recipient_groups.local.json"))
-    parser.add_argument("--traditionalize-transcript", dest="enable_traditionalize", action="store_true", default=os.environ.get("ENABLE_TRADITIONALIZE", os.environ.get("OPENCC_TRADITIONALIZE", "0")) == "1")
+    parser.add_argument("--traditionalize-transcript", dest="enable_traditionalize", action="store_true", default=os.environ.get("ENABLE_TRADITIONALIZE", os.environ.get("OPENCC_TRADITIONALIZE", "1")) == "1")
     parser.add_argument("--opencc-config", default=os.environ.get("OPENCC_CONFIG", "s2twp.json"))
     parser.add_argument("--debug", action="store_true")
     
@@ -111,174 +287,50 @@ def main() -> int:
     parser.add_argument("--enable-telegram", type=int, default=int(os.environ.get("ENABLE_TELEGRAM", "1")))
     
     args = parser.parse_args()
-
-    base_dir = Path(__file__).resolve().parent.parent
     root = Path(args.output_root).expanduser().resolve()
-    conv_script = base_dir / "tools" / "convert_transcript_opencc.py"
-    downloader = base_dir / "pipeline" / "download_latest_podcast.py"
 
-    items = build_items(Path(args.podcast_config).expanduser().resolve(), Path(args.youtube_config).expanduser().resolve(), Path(args.recipient_config).expanduser().resolve(), root)
+    items = build_items(
+        Path(args.podcast_config).expanduser().resolve(), 
+        Path(args.youtube_config).expanduser().resolve(), 
+        Path(args.recipient_config).expanduser().resolve(), 
+        root
+    )
     
-    # 強制 Debug 模式覆蓋邏輯
     if args.debug:
         debug_email = os.environ.get("DEBUG_RECIPIENT")
         if not debug_email:
             print("ERROR: DEBUG_RECIPIENT environment variable is not set.", file=sys.stderr)
             return 1
-        print(f"DEBUG MODE ENABLED: All emails will be redirected to {debug_email}")
-        for item in items:
-            item.emails = [debug_email]
-        
+        print(f"DEBUG MODE ENABLED: All emails redirected to {debug_email}")
+        for item in items: item.emails = [debug_email]
         debug_telegram = os.environ.get("DEBUG_TELEGRAM_CHAT_ID")
         if debug_telegram:
-            print(f"DEBUG MODE ENABLED: Telegram messages will be redirected to {debug_telegram}")
+            print(f"DEBUG MODE ENABLED: Telegram redirected to {debug_telegram}")
             os.environ["TELEGRAM_CHAT_ID"] = debug_telegram
 
     if not items:
         print("No subscriptions found.")
         return 0
 
-    overall_ok = True
-    print("Download phase: start")
-    start = time.monotonic()
-    for item in items:
-        item.output_dir.mkdir(parents=True, exist_ok=True)
-        t_start = time.monotonic()
-        if item.kind == "podcast":
-            res = download_single_podcast(item.source_url, item.output_dir, args.run_date, downloader, item.title)
-            if res.returncode == NO_EPISODE_EXIT_CODE and args.debug:
-                print(f"Debug mode fallback: Fetching latest episode for {item.label} regardless of date")
-                res = download_single_podcast(item.source_url, item.output_dir, None, downloader, item.title)
-            
-            print_completed_process(res)
-            if res.returncode == NO_EPISODE_EXIT_CODE:
-                log_event("download", "skipped", time.monotonic()-t_start, item.label, "no episode")
-            elif res.returncode == 0:
-                item.audio_path = parse_audio_path(res.stdout)
-                item.download_ready = item.audio_path is not None
-                log_event("download", "ok", time.monotonic()-t_start, item.label, item.audio_path.name if item.audio_path else "")
-            else: item.failed = True; overall_ok = False
-        else:
-            latest = resolve_youtube_latest(item.source_url)
-            if not latest: item.failed = True; overall_ok = False; continue
-            item.title = latest.get("title", "")
-            vid = latest.get("id", "")
-            existing = find_youtube_audio(item.output_dir, vid)
-            if existing:
-                item.audio_path = existing
-                item.download_ready = True
-                log_event("download", "ok", 0, item.label, existing.name)
-            else:
-                res = download_youtube_video(latest.get("webpage_url", ""), item.output_dir, base_dir / "id.txt")
-                print_completed_process(res)
-                item.audio_path = find_youtube_audio(item.output_dir, vid)
-                if item.audio_path:
-                    item.download_ready = True
-                    log_event("download", "ok", time.monotonic()-t_start, item.label, item.audio_path.name)
-                else: item.failed = True; overall_ok = False
-    log_event("phase_download", "ok", time.monotonic() - start)
-
-    print("Transcribe phase: start")
-    start = time.monotonic()
-    if args.enable_transcribe:
-        for item in items:
-            if not item.audio_path or item.failed: continue
-            t_start = time.monotonic()
-            existing = transcript_path_for(item.audio_path) if item.audio_path.suffix == ".mp3" else None
-            if existing and existing.exists(): item.transcript_path = existing; log_event("transcribe", "ok", 0, item.label, existing.name)
-            else:
-                res = subprocess.run([args.transcribe_script, str(item.audio_path)])
-                item.transcript_path = transcript_path_for(item.audio_path)
-                if res.returncode == 0 and item.transcript_path.exists(): log_event("transcribe", "ok", time.monotonic()-t_start, item.label, item.transcript_path.name)
-                else: item.failed = True; overall_ok = False; continue
-    else:
-        print("  Transcribe execution disabled. Checking for existing files.")
-        for item in items:
-            if item.audio_path:
-                item.transcript_path = transcript_path_for(item.audio_path)
-
-    # Post-transcribe: Traditionalize and set mail attachments
-    if args.enable_traditionalize:
-        print("Traditionalize phase: start")
-        for item in items:
-            if not item.transcript_path or not item.transcript_path.exists() or item.failed: continue
-            t_start = time.monotonic()
-            
-            # Convert .srt.txt
-            if item.transcript_path.name.endswith(".srt.txt") and not item.transcript_path.name.endswith(".zh-Hant.srt.txt"):
-                hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
-                if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
-                    res = run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
-                    if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, hant.name)
-            
-            # Convert .txt
-            txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
-            if txt_path.exists() and not txt_path.name.endswith(".zh-Hant.txt"):
-                txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
-                if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
-                    res = run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
-                    if res.returncode == 0: log_event("traditionalize", "ok", time.monotonic()-t_start, item.label, txt_hant.name)
-
-    # Set attachment paths
-    for item in items:
-        if not item.transcript_path or not item.transcript_path.exists() or item.failed: continue
-        item.mail_attachment_path = item.transcript_path
-        if args.enable_traditionalize:
-            hant_srt = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
-            if hant_srt.exists():
-                item.mail_attachment_path = hant_srt
-
-    log_event("phase_transcribe", "ok", time.monotonic() - start)
-
-    print("Summarize phase: start")
-    start = time.monotonic()
-    if args.enable_summarize:
-        for item in items:
-            if not item.transcript_path or item.failed: continue
-            
-            # Priority: .zh-Hant.txt -> .txt
-            txt_hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.txt"))
-            txt_plain = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
-            
-            target_txt = None
-            if args.enable_traditionalize and txt_hant.exists():
-                target_txt = txt_hant
-            elif txt_plain.exists():
-                target_txt = txt_plain
-            elif txt_hant.exists():
-                target_txt = txt_hant
-                
-            if target_txt.exists():
-                t_start = time.monotonic()
-                summary_path = summarize_file(target_txt, item.prompt_file)
-                if summary_path and summary_path.exists():
-                    item.mail_body = summary_path.read_text(encoding="utf-8")
-                    log_event("summarize", "ok", time.monotonic()-t_start, item.label, summary_path.name)
-                else:
-                    log_event("summarize", "failed", time.monotonic()-t_start, item.label)
-    else:
-        print("  Summarize disabled. Skipping.")
-    log_event("phase_summarize", "ok", time.monotonic() - start)
-
-    print("Notification phase: start")
-    start = time.monotonic()
+    # --- Run Pipeline ---
+    context = PipelineContext(args, items)
     
-    notifiers = get_notifiers()
-    active_any = False
-    for notifier in notifiers:
-        if notifier.is_enabled(args):
-            active_any = True
-            notifier.notify(items, args)
+    # Define stages (Following OCP: sequence can be changed or extended easily)
+    stages: List[BasePipelineStage] = [
+        DownloadStage(),
+        TranscribeStage(),
+        TraditionalizeStage(),
+        SummarizeStage(),
+        NotificationStage()
+    ]
     
-    if not active_any:
-        print("  All notifications disabled. Skipping.")
-    
-    log_event("phase_notification", "ok", time.monotonic() - start)
+    for stage in stages:
+        stage.run(context)
 
     all_downloaded = all(item.download_ready for item in items)
     print(f"PIPELINE_ALL_DOWNLOADED={'1' if all_downloaded else '0'}")
 
-    return 0 if overall_ok else 1
+    return 0 if context.overall_ok else 1
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -92,11 +92,25 @@ class OllamaSummarizer(BaseSummarizer):
             return None
 
 def get_summarizers() -> List[BaseSummarizer]:
+    """
+    Dynamically discovers and returns instances of all available summarizers.
+    Prioritizes Ollama if ENABLE_OLLAMA=1.
+    """
+    all_classes = BaseSummarizer.__subclasses__()
     summarizers = []
-    # If ENABLE_OLLAMA=1, it takes priority
+    
+    # Priority handling: Ollama first if enabled
     if os.environ.get("ENABLE_OLLAMA", "0") == "1":
-        summarizers.append(OllamaSummarizer("qwen2.5:7b"))
-    summarizers.append(GeminiSummarizer())
+        ollama_cls = next((c for c in all_classes if c.__name__ == "OllamaSummarizer"), None)
+        if ollama_cls:
+            summarizers.append(ollama_cls())
+    
+    # Then add others (like Gemini)
+    for cls in all_classes:
+        if cls.__name__ == "OllamaSummarizer":
+            continue
+        summarizers.append(cls())
+        
     return summarizers
 
 def traditionalize_text(text: str) -> str:
