@@ -180,6 +180,13 @@ class TelegramNotifier(BaseNotifier):
     def notify(self, items: List[any], args) -> None:
         t_start = time.monotonic()
         chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+        
+        # Only notify if there's something meaningful to report (at least one non-skipped item)
+        processed_items = [item for item in items if item.download_ready or item.failed]
+        if not processed_items:
+            print("Telegram notification skipped: No non-skipped items to report.")
+            return
+
         try:
             # 1. Summary Report
             summary_lines = [f"[Summary] Daily Pipeline Summary ({args.run_date}):"]
