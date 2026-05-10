@@ -11,6 +11,7 @@ ENABLE_TRANSCRIBE="1"
 ENABLE_TRADITIONALIZE="1"  # Simplified Chinese to Traditional Chinese (OpenCC)
 ENABLE_SUMMARIZE="1"
 ENABLE_OLLAMA="0"          # Use local Ollama for summarization (requires ENABLE_SUMMARIZE="1")
+SUMMARIZE_POLICY="first"   # 'first' to stop at first success, 'all' to run all models for comparison
 ENABLE_MAIL="1"
 ENABLE_TELEGRAM="1"
 
