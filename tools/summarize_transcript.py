@@ -69,7 +69,6 @@ class OllamaSummarizer(BaseSummarizer):
 
     def is_available(self) -> bool:
         try:
-            # Check if ollama server is responsive and model exists
             url = "http://localhost:11434/api/tags"
             with urllib.request.urlopen(url, timeout=2) as response:
                 data = json.loads(response.read().decode())
@@ -81,11 +80,7 @@ class OllamaSummarizer(BaseSummarizer):
     def summarize(self, full_prompt: str) -> Optional[str]:
         print(f"  [Ollama] 嘗試使用 {self.model} 模型...")
         url = "http://localhost:11434/api/generate"
-        payload = {
-            "model": self.model,
-            "prompt": full_prompt,
-            "stream": False
-        }
+        payload = {"model": self.model, "prompt": full_prompt, "stream": False}
         try:
             data = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
@@ -97,78 +92,43 @@ class OllamaSummarizer(BaseSummarizer):
             return None
 
 def get_summarizers() -> List[BaseSummarizer]:
-    # Order of preference: Ollama (local) -> Gemini (cloud)
     summarizers = []
-    
-    # Check if Ollama is enabled via environment variable
+    # If ENABLE_OLLAMA=1, it takes priority
     if os.environ.get("ENABLE_OLLAMA", "0") == "1":
         summarizers.append(OllamaSummarizer("qwen2.5:7b"))
-    
     summarizers.append(GeminiSummarizer())
     return summarizers
 
 def traditionalize_text(text: str) -> str:
-    """Converts text from Simplified to Traditional Chinese using OpenCC command line."""
     try:
-        # Use OpenCC to convert the string
-        # Defaulting to s2twp.json (Simplified to Taiwan Traditional with phrases)
         config = os.environ.get("OPENCC_CONFIG", "s2twp.json")
-        result = subprocess.run(
-            ["opencc", "-c", config],
-            input=text,
-            text=True,
-            capture_output=True,
-            check=True
-        )
+        result = subprocess.run(["opencc", "-c", config], input=text, text=True, capture_output=True, check=True)
         return result.stdout
     except Exception as e:
-        print(f"  [OpenCC] 轉換摘要失敗 (將保留原樣): {e}")
+        print(f"  [OpenCC] 轉換摘要失敗: {e}")
         return text
 
-def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> List[Path]:
-    """
-    Summarizes the file using available models.
-    Controlled by environment variables:
-    - ENABLE_OLLAMA, ENABLE_GEMINI: Toggles for specific models.
-    - SUMMARIZE_POLICY: 'first' (stop at first success) or 'all' (run all for comparison).
-    """
-    policy = os.environ.get("SUMMARIZE_POLICY", "first")
+def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | None:
+    output_md_path = txt_path.with_name(f"{txt_path.stem}.summary.md")
     template_path = prompt_file if prompt_file and prompt_file.exists() else Path("prompts/default.md")
     
-    summarizers = get_summarizers()
-    summary_paths = []
+    if output_md_path.exists():
+        if output_md_path.stat().st_mtime >= txt_path.stat().st_mtime:
+            print(f"摘要已存在且為最新: {output_md_path.name}")
+            return output_md_path
 
-    for summarizer in summarizers:
-        # Use specific filename in 'all' policy (for comparison), otherwise use generic
-        suffix = f".{summarizer.name}" if policy == "all" else ""
-        output_md_path = txt_path.with_name(f"{txt_path.stem}{suffix}.summary.md")
-        
-        # Cache check
-        if output_md_path.exists():
-            is_newer = output_md_path.stat().st_mtime >= txt_path.stat().st_mtime
-            if is_newer and template_path.exists():
-                is_newer = output_md_path.stat().st_mtime >= template_path.stat().st_mtime
-            
-            if is_newer:
-                print(f"摘要已存在 ({summarizer.name})，跳過 AI 執行: {output_md_path.name}")
-                summary_paths.append(output_md_path)
-                if policy == "first": break
-                continue
+    print(f"正在摘要: {txt_path.name} ...")
+    transcript_content = txt_path.read_text(encoding="utf-8")
+    template = template_path.read_text(encoding="utf-8") if template_path.exists() else DEFAULT_PROMPT_TEMPLATE
+    full_prompt = template.replace("{transcript_content}", transcript_content)
 
+    for summarizer in get_summarizers():
         if summarizer.is_available():
-            print(f"正在摘要 ({summarizer.name}): {txt_path.name} ...")
-            transcript_content = txt_path.read_text(encoding="utf-8")
-            template = template_path.read_text(encoding="utf-8") if template_path.exists() else DEFAULT_PROMPT_TEMPLATE
-            full_prompt = template.replace("{transcript_content}", transcript_content)
-            
             summary_text = summarizer.summarize(full_prompt)
             if summary_text:
                 final_text = traditionalize_text(summary_text)
                 output_md_path.write_text(final_text, encoding="utf-8")
-                print(f"[OK] 摘要完成 (使用 {summarizer.name} 模型): {output_md_path.name}")
-                summary_paths.append(output_md_path)
-                if policy == "first": break
-            else:
-                print(f"[FAILED] {summarizer.name} 摘要失敗")
+                print(f"[OK] 摘要完成 ({summarizer.name}): {output_md_path.name}")
+                return output_md_path
 
-    return summary_paths
+    return None

@@ -250,18 +250,10 @@ def main() -> int:
                 
             if target_txt.exists():
                 t_start = time.monotonic()
-                summary_paths = summarize_file(target_txt, item.prompt_file)
-                if summary_paths:
-                    bodies = []
-                    for sp in summary_paths:
-                        # Extract model name if possible (e.g., EP1093.gemini.summary.md)
-                        parts = sp.name.split(".")
-                        model_label = f"--- 模型: {parts[-3]} ---" if len(parts) > 3 else ""
-                        content = sp.read_text(encoding="utf-8")
-                        bodies.append(f"{model_label}\n{content}" if model_label else content)
-                    
-                    item.mail_body = "\n\n".join(bodies)
-                    log_event("summarize", "ok", time.monotonic()-t_start, item.label, f"{len(summary_paths)} models")
+                summary_path = summarize_file(target_txt, item.prompt_file)
+                if summary_path and summary_path.exists():
+                    item.mail_body = summary_path.read_text(encoding="utf-8")
+                    log_event("summarize", "ok", time.monotonic()-t_start, item.label, summary_path.name)
                 else:
                     log_event("summarize", "failed", time.monotonic()-t_start, item.label)
     else:
