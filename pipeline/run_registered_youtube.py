@@ -42,8 +42,9 @@ def find_youtube_audio(output_dir: Path, video_id: str) -> Path | None:
     return matches[0] if matches else None
 
 def download_youtube_video(video_url: str, output_dir: Path, archive_file: Path) -> subprocess.CompletedProcess:
+    yt_dlp_bin = os.environ.get("YT_DLP_BIN", "yt-dlp")
     return run_command([
-        "yt-dlp", "--download-archive", str(archive_file), "--no-overwrites",
+        yt_dlp_bin, "--download-archive", str(archive_file), "--no-overwrites",
         "-f", "bestaudio/best", "-x", "--audio-format", "mp3",
         "--paths", str(output_dir), "-o", "%(title).200B__%(id)s.%(ext)s", video_url
     ])

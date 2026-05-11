@@ -1,0 +1,37 @@
+Traceback (most recent call last):
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 435, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 427, in main
+    stage.run(context)
+    ~~~~~~~~~^^^^^^^^^
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 189, in run
+    if d.download(item, context):
+       ~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 116, in download
+    res = download_youtube_video(item.source_url, item.output_dir, BASE_DIR / "id.txt")
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_registered_youtube.py", line 45, in download_youtube_video
+    return run_command([
+        "yt-dlp", "--download-archive", str(archive_file), "--no-overwrites",
+        "-f", "bestaudio/best", "-x", "--audio-format", "mp3",
+        "--paths", str(output_dir), "-o", "%(title).200B__%(id)s.%(ext)s", video_url
+    ])
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_registered_youtube.py", line 29, in run_command
+    return subprocess.run(command, text=True, capture_output=True)
+           ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 554, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1038, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1989, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'yt-dlp'

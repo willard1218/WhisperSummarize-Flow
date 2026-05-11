@@ -100,17 +100,28 @@ class YouTubeDownloader(BaseDownloader):
         t_start = time.monotonic()
         is_direct_video = "watch?v=" in item.source_url or "youtu.be/" in item.source_url
         
+        # Extract Video ID first to check for existing files
+        vid_match = re.search(r"v=([a-zA-Z0-9_-]+)", item.source_url) or re.search(r"be/([a-zA-Z0-9_-]+)", item.source_url)
+        vid = vid_match.group(1) if vid_match else None
+        
+        if vid:
+            existing = find_youtube_audio(item.output_dir, vid)
+            if existing:
+                item.audio_path = existing
+                item.download_ready = True
+                self.log_event("ok", 0, item.label, existing.name)
+                return True
+
         if is_direct_video:
             res = download_youtube_video(item.source_url, item.output_dir, BASE_DIR / "id.txt")
             if res.stdout: print(res.stdout, end="")
-            vid_match = re.search(r"v=([a-zA-Z0-9_-]+)", item.source_url) or re.search(r"be/([a-zA-Z0-9_-]+)", item.source_url)
-            vid = vid_match.group(1) if vid_match else None
             if vid: item.audio_path = find_youtube_audio(item.output_dir, vid)
         else:
             latest = resolve_youtube_latest(item.source_url)
             if not latest: return False
             item.title = latest.get("title", "")
             vid = latest.get("id", "")
+            # Double check existing again after resolution
             existing = find_youtube_audio(item.output_dir, vid)
             if existing:
                 item.audio_path = existing
@@ -312,10 +323,26 @@ def load_local_config():
         content = config_path.read_text()
         for line in content.splitlines():
             line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, value = line.split("=", 1)
-                value = value.strip().strip('"').strip("'")
-                os.environ[key] = value
+            if not line or line.startswith("#"): continue
+            
+            # Remove 'export ' prefix if present
+            if line.startswith("export "):
+                line = line[7:].strip()
+            
+            if "=" in line:
+                try:
+                    # Split only on first '=' and remove comments
+                    kv_part = line.split("#", 1)[0].strip()
+                    key, value = kv_part.split("=", 1)
+                    value = value.strip().strip('"').strip("'")
+                    
+                    # Handle PATH variable specifically (append/prepend)
+                    if key == "PATH":
+                        os.environ["PATH"] = value.replace("$PATH", os.environ.get("PATH", ""))
+                    else:
+                        os.environ[key] = value
+                except ValueError:
+                    continue
 
 def build_items(args, root: Path) -> List[DailyItem]:
     groups = load_recipient_groups(Path(args.recipient_config).expanduser().resolve())
