@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import smtplib
 import subprocess
@@ -67,30 +68,42 @@ def send_mail(recipient: str, subject: str, attachment_paths: Path | Iterable[Pa
         server.login(user, password)
         server.send_message(msg)
 
-def send_telegram_msg(message: str) -> None:
-    """Sends a message via Telegram Bot API, splitting long messages if necessary."""
+def send_telegram_msg(message: str) -> bool:
+    """Sends a message via Telegram Bot API using JSON, splitting long messages if necessary."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     
     if not token or not chat_id:
         print("Telegram notification skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set.")
-        return
+        return False
 
-    message = strip_emojis(message)
     MAX_LENGTH = 4000
     chunks = [message[i:i + MAX_LENGTH] for i in range(0, len(message), MAX_LENGTH)]
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     
+    all_ok = True
     for i, chunk in enumerate(chunks):
         if i > 0: time.sleep(1)
-        data = urllib.parse.urlencode({"chat_id": chat_id, "text": chunk}).encode("utf-8")
+        payload = {
+            "chat_id": chat_id,
+            "text": chunk,
+            "disable_web_page_preview": True
+        }
+        data = json.dumps(payload).encode("utf-8")
         try:
-            req = urllib.request.Request(url, data=data)
-            with urllib.request.urlopen(req) as response:
+            req = urllib.request.Request(
+                url, 
+                data=data, 
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=30) as response:
                 if response.status != 200:
                     print(f"Failed to send Telegram message. Status: {response.status}")
+                    all_ok = False
         except Exception as e:
             print(f"Error sending Telegram message: {e}")
+            all_ok = False
+    return all_ok
 
 # --- OCP Refactored Notifiers ---
 
@@ -174,8 +187,8 @@ class TelegramNotifier(BaseNotifier):
                         # Add a simple prefix to the detailed message with the run date
                         prefix = f"[Summary] {args.run_date}\n"
                         msg = f"{prefix}[Detail] # {item.title or item.label}\n\n{item.mail_body}"
-                        send_telegram_msg(msg)
-                        marker.touch()
+                        if send_telegram_msg(msg):
+                            marker.touch()
             
             self.log_event("ok", time.monotonic()-t_start)
         except Exception as e:

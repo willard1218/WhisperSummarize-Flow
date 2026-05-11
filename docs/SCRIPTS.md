@@ -40,5 +40,6 @@ python3 tools/register_youtube_channel.py 'URL' --recipient-group 'GROUP'
 ## 其他實用腳本
 
 - `tools/dump_daily_plan.py`: 預覽當日執行計畫（查看誰會被下載、誰會被通知）。
+- `tools/telegram_listener.py`: **Telegram Bot 互動監聽器**。啟動後，您可以直接將影片網址傳給 Bot，手動啟動轉錄與摘要流程。
 - `schedule/update_schedule.sh`: 修改 `launchd` 排程時間（macOS）。
 - `gensrt.sh`: 核心轉錄引擎。整合了 Whisper 與全域鎖，確保轉錄過程不衝突且具備斷點續傳能力。

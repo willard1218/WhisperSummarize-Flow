@@ -70,7 +70,11 @@ def call_api(method, data=None):
         return None
 
 def send_message(chat_id, text, reply_markup=None):
-    payload = {"chat_id": chat_id, "text": text}
+    payload = {
+        "chat_id": chat_id, 
+        "text": text,
+        "disable_web_page_preview": True
+    }
     if reply_markup:
         payload["reply_markup"] = reply_markup
     return call_api("sendMessage", payload)
@@ -115,6 +119,26 @@ def get_transcribe_status():
             pid = pid_file.read_text().strip()
             return f"🔴 忙碌中 (正在轉錄 PID: {pid})"
     return "🟢 空閒 (隨時可以執行)"
+
+def format_url_for_display(url):
+    """Formats a URL for display to avoid Telegram link previews."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if "youtube.com" in parsed.netloc or "youtu.be" in parsed.netloc:
+            # Handle youtu.be/xxx -> youtube.com/watch?v=xxx
+            if "youtu.be" in parsed.netloc:
+                return f"[youtube] watch?v={parsed.path.lstrip('/')}"
+            
+            # Handle youtube.com/watch?v=xxx
+            path_query = parsed.path.lstrip('/')
+            if parsed.query:
+                path_query += f"?{parsed.query}"
+            return f"[youtube] {path_query}"
+        elif "soundon.fm" in parsed.netloc:
+            return f"[soundon] {parsed.path.lstrip('/')}"
+    except Exception:
+        pass
+    return url
 
 def handle_update(update):
     global OWNER_CHAT_ID
