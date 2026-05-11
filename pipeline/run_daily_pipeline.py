@@ -36,7 +36,7 @@ from run_registered_youtube import (
     run_command
 )
 from summarize_transcript import summarize_file
-from notifier import get_notifiers
+from notifier import get_notifiers, send_telegram_msg
 
 # --- Data Models ---
 
@@ -64,6 +64,15 @@ class PipelineContext:
         self.args = args
         self.items = items
         self.overall_ok = True
+
+    def report_status(self, message: str):
+        """Sends a progress update to Telegram if enabled."""
+        print(f"[Status] {message}")
+        if getattr(self.args, "telegram_progress", False):
+            try:
+                send_telegram_msg(message)
+            except Exception as e:
+                print(f"Failed to send Telegram status: {e}")
 
 class BasePipelineStage:
     """Base class for all pipeline processing stages."""
@@ -175,9 +184,8 @@ class PodcastDownloader(BaseDownloader):
 
 class DownloadStage(BasePipelineStage):
     def run(self, context: PipelineContext) -> None:
-        print("Download phase: start")
+        context.report_status("📂 開始下載階段...")
         start = time.monotonic()
-        
         # Discover all downloader implementations
         downloaders = [cls() for cls in BaseDownloader.__subclasses__()]
         
@@ -188,13 +196,18 @@ class DownloadStage(BasePipelineStage):
                 if d.can_handle(item):
                     if d.download(item, context):
                         handled = True
+                        if item.download_ready:
+                            context.report_status(f"✅ 下載完成: {item.label}")
                     else:
                         item.failed = True
                         context.overall_ok = False
+                        context.report_status(f"❌ 下載失敗: {item.label}")
                     break
             
             if not handled and not item.failed:
-                print(f"  [Error] No downloader found for URL: {item.source_url}")
+                error_msg = f"  [Error] No downloader found for URL: {item.source_url}"
+                print(error_msg)
+                context.report_status(f"❌ 錯誤: 找不到支援的下載器 ({item.label})")
                 item.failed = True
                 context.overall_ok = False
                 
@@ -202,29 +215,30 @@ class DownloadStage(BasePipelineStage):
 
 class TranscribeStage(BasePipelineStage):
     def run(self, context: PipelineContext) -> None:
-        print("Transcribe phase: start")
+        if not context.args.enable_transcribe:
+            context.report_status("⏭️ 轉錄已禁用，跳過。")
+            return
+            
+        context.report_status("🎙️ 開始轉錄階段 (GPU)...")
         start = time.monotonic()
-        if context.args.enable_transcribe:
-            for item in context.items:
-                if not item.audio_path or item.failed: continue
-                t_start = time.monotonic()
-                existing = transcript_path_for(item.audio_path) if item.audio_path.suffix == ".mp3" else None
-                if existing and existing.exists(): 
-                    item.transcript_path = existing
-                    self.log_event("transcribe", "ok", 0, item.label, existing.name)
-                else:
-                    res = subprocess.run([context.args.transcribe_script, str(item.audio_path)])
-                    item.transcript_path = transcript_path_for(item.audio_path)
-                    if res.returncode == 0 and item.transcript_path.exists(): 
-                        self.log_event("transcribe", "ok", time.monotonic()-t_start, item.label, item.transcript_path.name)
-                    else: 
-                        item.failed = True
-                        context.overall_ok = False
-        else:
-            print("  Transcribe execution disabled. Checking for existing files.")
-            for item in context.items:
-                if item.audio_path:
-                    item.transcript_path = transcript_path_for(item.audio_path)
+        for item in context.items:
+            if not item.audio_path or item.failed: continue
+            t_start = time.monotonic()
+            existing = transcript_path_for(item.audio_path) if item.audio_path.suffix == ".mp3" else None
+            if existing and existing.exists(): 
+                item.transcript_path = existing
+                self.log_event("transcribe", "ok", 0, item.label, existing.name)
+                context.report_status(f"⏭️ 轉錄已存在: {item.label}")
+            else:
+                res = subprocess.run([context.args.transcribe_script, str(item.audio_path)])
+                item.transcript_path = transcript_path_for(item.audio_path)
+                if res.returncode == 0 and item.transcript_path.exists(): 
+                    self.log_event("transcribe", "ok", time.monotonic()-t_start, item.label, item.transcript_path.name)
+                    context.report_status(f"✅ 轉錄完成: {item.label}")
+                else: 
+                    item.failed = True
+                    context.overall_ok = False
+                    context.report_status(f"❌ 轉錄失敗: {item.label}")
         self.log_event("phase_transcribe", "ok", time.monotonic() - start)
 
 class TraditionalizeStage(BasePipelineStage):
@@ -232,7 +246,7 @@ class TraditionalizeStage(BasePipelineStage):
         if not context.args.enable_traditionalize:
             return
             
-        print("Traditionalize phase: start")
+        context.report_status("🔠 開始簡轉繁階段...")
         start = time.monotonic()
         conv_script = BASE_DIR / "tools" / "convert_transcript_opencc.py"
         
@@ -268,10 +282,10 @@ class TraditionalizeStage(BasePipelineStage):
 class SummarizeStage(BasePipelineStage):
     def run(self, context: PipelineContext) -> None:
         if not context.args.enable_summarize:
-            print("  Summarize disabled. Skipping.")
+            context.report_status("⏭️ 摘要已禁用，跳過。")
             return
             
-        print("Summarize phase: start")
+        context.report_status("🤖 開始 AI 摘要階段...")
         start = time.monotonic()
         for item in context.items:
             if not item.transcript_path or item.failed: continue
@@ -294,13 +308,15 @@ class SummarizeStage(BasePipelineStage):
                 if summary_path and summary_path.exists():
                     item.mail_body = summary_path.read_text(encoding="utf-8")
                     self.log_event("summarize", "ok", time.monotonic()-t_start, item.label, summary_path.name)
+                    context.report_status(f"✅ 摘要完成: {item.label}")
                 else:
                     self.log_event("summarize", "failed", time.monotonic()-t_start, item.label)
+                    context.report_status(f"❌ 摘要失敗: {item.label}")
         self.log_event("phase_summarize", "ok", time.monotonic() - start)
 
 class NotificationStage(BasePipelineStage):
     def run(self, context: PipelineContext) -> None:
-        print("Notification phase: start")
+        context.report_status("✉️ 開始發送通知...")
         start = time.monotonic()
         
         notifiers = get_notifiers()
@@ -406,6 +422,7 @@ def main() -> int:
     parser.add_argument("--enable-summarize", type=int, default=int(os.environ.get("ENABLE_SUMMARIZE", "1")))
     parser.add_argument("--enable-mail", type=int, default=int(os.environ.get("ENABLE_MAIL", "1")))
     parser.add_argument("--enable-telegram", type=int, default=int(os.environ.get("ENABLE_TELEGRAM", "1")))
+    parser.add_argument("--telegram-progress", dest="telegram_progress", action="store_true", help="Send real-time progress to Telegram")
     
     args = parser.parse_args()
     root = Path(args.output_root).expanduser().resolve()
@@ -456,6 +473,4 @@ def main() -> int:
     return 0 if context.overall_ok else 1
 
 if __name__ == "__main__":
-    # Ensure default transcribe script uses absolute path
-    # (main() will reload config, but we can also set a fallback here)
     raise SystemExit(main())

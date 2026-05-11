@@ -100,9 +100,10 @@ def run_pipeline(url):
         "--enable-transcribe", "1",
         "--enable-summarize", "1",
         "--enable-mail", "1",
-        "--enable-telegram", "1"
+        "--enable-telegram", "1",
+        "--telegram-progress"
     ]
-    # We use Popen so the listener doesn't block while the pipeline runs (which takes minutes)
+    # We use Popen so the listener doesn't block while the pipeline runs
     subprocess.Popen(cmd, cwd=str(BASE_DIR))
 
 def get_transcribe_status():
