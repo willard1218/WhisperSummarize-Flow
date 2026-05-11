@@ -326,8 +326,9 @@ def load_local_config():
             if not line or line.startswith("#"): continue
             
             # Remove 'export ' prefix if present
-            if line.startswith("export "):
-                line = line[7:].strip()
+            PREFIX = "export "
+            if line.startswith(PREFIX):
+                line = line[len(PREFIX):].strip()
             
             if "=" in line:
                 try:
