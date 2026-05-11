@@ -393,7 +393,7 @@ def main() -> int:
     parser.add_argument("--recipient-group", default="all", help="Recipient group for ad-hoc task")
     parser.add_argument("--date", dest="run_date", type=parse_run_date, default=date.today())
     parser.add_argument("--output-root", default="output")
-    parser.add_argument("--transcribe-script", default=os.environ.get("GENSRT_SCRIPT", "gensrt.sh"))
+    parser.add_argument("--transcribe-script", default=os.environ.get("GENSRT_SCRIPT", str(BASE_DIR / "gensrt.sh")))
     parser.add_argument("--podcast-config", default="config/subscriptions.json")
     parser.add_argument("--youtube-config", default="config/youtube_subscriptions.json")
     parser.add_argument("--recipient-config", default=os.environ.get("RECIPIENT_CONFIG_FILE", "config/recipient_groups.local.json"))
@@ -441,7 +441,14 @@ def main() -> int:
     ]
     
     for stage in stages:
-        stage.run(context)
+        try:
+            stage.run(context)
+        except Exception as e:
+            error_msg = f"❌ 系統錯誤 ({stage.__class__.__name__}): {str(e)}"
+            print(error_msg)
+            context.report_status(error_msg)
+            context.overall_ok = False
+            break
 
     all_downloaded = all(item.download_ready for item in items)
     print(f"PIPELINE_ALL_DOWNLOADED={'1' if all_downloaded else '0'}")
@@ -449,4 +456,6 @@ def main() -> int:
     return 0 if context.overall_ok else 1
 
 if __name__ == "__main__":
+    # Ensure default transcribe script uses absolute path
+    # (main() will reload config, but we can also set a fallback here)
     raise SystemExit(main())

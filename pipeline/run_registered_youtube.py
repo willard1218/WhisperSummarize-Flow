@@ -29,8 +29,9 @@ def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True)
 
 def resolve_youtube_latest(channel_url: str) -> dict | None:
+    yt_dlp_bin = os.environ.get("YT_DLP_BIN", "yt-dlp")
     result = run_command([
-        "yt-dlp", "--flat-playlist", "--playlist-end", "1",
+        yt_dlp_bin, "--flat-playlist", "--playlist-end", "1",
         "--match-filter", "live_status=was_live", "--print-json", channel_url
     ])
     if result.returncode != 0 or not result.stdout.strip():
@@ -43,11 +44,19 @@ def find_youtube_audio(output_dir: Path, video_id: str) -> Path | None:
 
 def download_youtube_video(video_url: str, output_dir: Path, archive_file: Path) -> subprocess.CompletedProcess:
     yt_dlp_bin = os.environ.get("YT_DLP_BIN", "yt-dlp")
-    return run_command([
+    ffmpeg_bin = os.environ.get("FFMPEG_BIN")
+    
+    command = [
         yt_dlp_bin, "--download-archive", str(archive_file), "--no-overwrites",
         "-f", "bestaudio/best", "-x", "--audio-format", "mp3",
-        "--paths", str(output_dir), "-o", "%(title).200B__%(id)s.%(ext)s", video_url
-    ])
+        "--paths", str(output_dir), "-o", "%(title).200B__%(id)s.%(ext)s"
+    ]
+    
+    if ffmpeg_bin:
+        command.extend(["--ffmpeg-location", ffmpeg_bin])
+        
+    command.append(video_url)
+    return run_command(command)
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Process registered YouTube channels.")

@@ -1,1 +1,134 @@
 Download phase: start
+Download phase: start
+[youtube] Extracting URL: https://youtube.com/watch?v=xntn1ahZvbc
+[youtube] xntn1ahZvbc: Downloading webpage
+[youtube] xntn1ahZvbc: Downloading android vr player API JSON
+[youtube] xntn1ahZvbc: Downloading player 8fb635c2-main
+[youtube] [jsc:deno] Solving JS challenges using deno
+[youtube] xntn1ahZvbc: Downloading m3u8 information
+[info] xntn1ahZvbc: Downloading 1 format(s): 251
+[download] Destination: /Users/willard/Developer/WhisperSummarize-Flow/output/adhoc_yt_xntn1ahZvbc/【中文知識立體書】將世界史知識變成精采冒險故事！ KiDiDOC 超好玩互動知識書第五輯：勇闖古老城堡 & 航向海盜王國__xntn1ahZvbc.webm
+
+[download]   0.0% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]   0.0% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]   0.0% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]   0.1% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]   0.1% of   24.79MiB at   26.65MiB/s ETA 00:00  
+[download]   0.2% of   24.79MiB at   32.18MiB/s ETA 00:00
+[download]   0.5% of   24.79MiB at   36.67MiB/s ETA 00:00
+[download]   1.0% of   24.79MiB at   22.23MiB/s ETA 00:01
+[download]   2.0% of   24.79MiB at   17.69MiB/s ETA 00:01
+[download]   4.0% of   24.79MiB at   15.95MiB/s ETA 00:01
+[download]   8.1% of   24.79MiB at   15.50MiB/s ETA 00:01
+[download]  16.1% of   24.79MiB at   14.43MiB/s ETA 00:01
+[download]  32.3% of   24.79MiB at   17.20MiB/s ETA 00:00
+[download]  39.1% of   24.79MiB at   17.10MiB/s ETA 00:00
+[download]  39.1% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  39.1% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  39.1% of   24.79MiB at    6.51MiB/s ETA 00:02  
+[download]  39.1% of   24.79MiB at   10.06MiB/s ETA 00:01
+[download]  39.2% of   24.79MiB at   16.35MiB/s ETA 00:00
+[download]  39.3% of   24.79MiB at   27.48MiB/s ETA 00:00
+[download]  39.6% of   24.79MiB at   46.84MiB/s ETA 00:00
+[download]  40.1% of   24.79MiB at   74.58MiB/s ETA 00:00
+[download]  41.1% of   24.79MiB at   11.74MiB/s ETA 00:01
+[download]  43.1% of   24.79MiB at   13.15MiB/s ETA 00:01
+[download]  47.1% of   24.79MiB at   13.66MiB/s ETA 00:00
+[download]  55.2% of   24.79MiB at   22.17MiB/s ETA 00:00
+[download]  71.3% of   24.79MiB at    5.24MiB/s ETA 00:01
+[download]  78.6% of   24.79MiB at    4.26MiB/s ETA 00:01
+[download]  78.6% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  78.6% of   24.79MiB at    2.64MiB/s ETA 00:02  
+[download]  78.6% of   24.79MiB at    3.02MiB/s ETA 00:01
+[download]  78.7% of   24.79MiB at    4.62MiB/s ETA 00:01
+[download]  78.7% of   24.79MiB at    7.50MiB/s ETA 00:00
+[download]  78.9% of   24.79MiB at   12.59MiB/s ETA 00:00
+[download]  79.1% of   24.79MiB at   21.49MiB/s ETA 00:00
+[download]  79.6% of   24.79MiB at   34.57MiB/s ETA 00:00
+[download]  80.6% of   24.79MiB at   55.00MiB/s ETA 00:00
+[download]  82.7% of   24.79MiB at  955.77KiB/s ETA 00:04
+[download]  84.6% of   24.79MiB at    1.29MiB/s ETA 00:02
+[download]  88.4% of   24.79MiB at    1.89MiB/s ETA 00:01
+[download]  96.0% of   24.79MiB at    2.59MiB/s ETA 00:00
+[download] 100.0% of   24.79MiB at    2.50MiB/s ETA 00:00
+[download] 100% of   24.79MiB in 00:00:05 at 4.87MiB/s   
+EVENT phase_download status=ok seconds=7.95
+Transcribe phase: start
+EVENT phase_transcribe status=ok seconds=0.00
+Traditionalize phase: start
+EVENT phase_traditionalize status=ok seconds=0.00
+Summarize phase: start
+EVENT phase_summarize status=ok seconds=0.00
+Notification phase: start
+EVENT telegram status=ok seconds=0.00
+EVENT phase_notification status=ok seconds=0.00
+PIPELINE_ALL_DOWNLOADED=0
+Download phase: start
+EVENT download status=ok seconds=0.00 item="Ad-hoc Task" detail="【中文知識立體書】將世界史知識變成精采冒險故事！ KiDiDOC 超好玩互動知識書第五輯：勇闖古老城堡 & 航向海盜王國__xntn1ahZvbc.mp3"
+EVENT phase_download status=ok seconds=0.00
+Transcribe phase: start
+Download phase: start
+[youtube] Extracting URL: https://youtube.com/watch?v=xntn1ahZvbc
+[youtube] xntn1ahZvbc: Downloading webpage
+[youtube] xntn1ahZvbc: Downloading android vr player API JSON
+[youtube] xntn1ahZvbc: Downloading player 8fb635c2-main
+[youtube] [jsc:deno] Solving JS challenges using deno
+[youtube] xntn1ahZvbc: Downloading m3u8 information
+[info] xntn1ahZvbc: Downloading 1 format(s): 251
+[download] Destination: /Users/willard/Developer/WhisperSummarize-Flow/output/adhoc_yt_xntn1ahZvbc/【中文知識立體書】將世界史知識變成精采冒險故事！ KiDiDOC 超好玩互動知識書第五輯：勇闖古老城堡 & 航向海盜王國__xntn1ahZvbc.webm
+
+[download]   0.0% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]   0.0% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]   0.0% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]   0.1% of   24.79MiB at   14.56MiB/s ETA 00:01  
+[download]   0.1% of   24.79MiB at   25.90MiB/s ETA 00:00
+[download]   0.2% of   24.79MiB at   44.39MiB/s ETA 00:00
+[download]   0.5% of   24.79MiB at   66.90MiB/s ETA 00:00
+[download]   1.0% of   24.79MiB at   78.91MiB/s ETA 00:00
+[download]   2.0% of   24.79MiB at   92.79MiB/s ETA 00:00
+[download]   4.0% of   24.79MiB at  100.35MiB/s ETA 00:00
+[download]   8.1% of   24.79MiB at  104.90MiB/s ETA 00:00
+[download]  16.1% of   24.79MiB at   95.60MiB/s ETA 00:00
+[download]  32.3% of   24.79MiB at   71.47MiB/s ETA 00:00
+[download]  38.4% of   24.79MiB at   54.29MiB/s ETA 00:00
+[download]  38.4% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  38.4% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  38.4% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  38.4% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  38.5% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  38.6% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  38.9% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  39.4% of   24.79MiB at  104.27MiB/s ETA 00:00  
+[download]  40.4% of   24.79MiB at    7.69MiB/s ETA 00:01
+[download]  42.4% of   24.79MiB at   14.40MiB/s ETA 00:00
+[download]  46.4% of   24.79MiB at   25.49MiB/s ETA 00:00
+[download]  54.5% of   24.79MiB at   22.76MiB/s ETA 00:00
+[download]  70.6% of   24.79MiB at   28.40MiB/s ETA 00:00
+[download]  76.8% of   24.79MiB at   26.92MiB/s ETA 00:00
+[download]  76.8% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  76.8% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  76.8% of   24.79MiB at  Unknown B/s ETA Unknown
+[download]  76.9% of   24.79MiB at   12.24MiB/s ETA 00:00  
+[download]  76.9% of   24.79MiB at   19.27MiB/s ETA 00:00
+[download]  77.0% of   24.79MiB at   31.53MiB/s ETA 00:00
+[download]  77.3% of   24.79MiB at   52.22MiB/s ETA 00:00
+[download]  77.8% of   24.79MiB at   70.46MiB/s ETA 00:00
+[download]  78.8% of   24.79MiB at   95.98MiB/s ETA 00:00
+[download]  80.8% of   24.79MiB at   41.19MiB/s ETA 00:00
+[download]  84.9% of   24.79MiB at   60.08MiB/s ETA 00:00
+[download]  92.9% of   24.79MiB at   57.41MiB/s ETA 00:00
+[download] 100.0% of   24.79MiB at   63.78MiB/s ETA 00:00
+[download] 100% of   24.79MiB in 00:00:00 at 33.10MiB/s  
+[ExtractAudio] Destination: /Users/willard/Developer/WhisperSummarize-Flow/output/adhoc_yt_xntn1ahZvbc/【中文知識立體書】將世界史知識變成精采冒險故事！ KiDiDOC 超好玩互動知識書第五輯：勇闖古老城堡 & 航向海盜王國__xntn1ahZvbc.mp3
+Deleting original file /Users/willard/Developer/WhisperSummarize-Flow/output/adhoc_yt_xntn1ahZvbc/【中文知識立體書】將世界史知識變成精采冒險故事！ KiDiDOC 超好玩互動知識書第五輯：勇闖古老城堡 & 航向海盜王國__xntn1ahZvbc.webm (pass -k to keep)
+EVENT download status=ok seconds=23.57 item="Ad-hoc Task" detail="【中文知識立體書】將世界史知識變成精采冒險故事！ KiDiDOC 超好玩互動知識書第五輯：勇闖古老城堡 & 航向海盜王國__xntn1ahZvbc.mp3"
+EVENT phase_download status=ok seconds=23.57
+Transcribe phase: start
+Download phase: start
+EVENT download status=ok seconds=0.00 item="Ad-hoc Task" detail="【中文知識立體書】將世界史知識變成精采冒險故事！ KiDiDOC 超好玩互動知識書第五輯：勇闖古老城堡 & 航向海盜王國__xntn1ahZvbc.mp3"
+EVENT phase_download status=ok seconds=0.00
+Transcribe phase: start
+Download phase: start
+EVENT download status=ok seconds=0.00 item="Ad-hoc Task" detail="【中文知識立體書】將世界史知識變成精采冒險故事！ KiDiDOC 超好玩互動知識書第五輯：勇闖古老城堡 & 航向海盜王國__xntn1ahZvbc.mp3"
+EVENT phase_download status=ok seconds=0.00
+Transcribe phase: start

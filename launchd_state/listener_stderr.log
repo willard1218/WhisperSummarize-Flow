@@ -35,3 +35,103 @@ Traceback (most recent call last):
   File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1989, in _execute_child
     raise child_exception_type(errno_num, err_msg, err_filename)
 FileNotFoundError: [Errno 2] No such file or directory: 'yt-dlp'
+Traceback (most recent call last):
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 452, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 444, in main
+    stage.run(context)
+    ~~~~~~~~~^^^^^^^^^
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 216, in run
+    res = subprocess.run([context.args.transcribe_script, str(item.audio_path)])
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 554, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1038, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1989, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'gensrt.sh'
+Traceback (most recent call last):
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 452, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 444, in main
+    stage.run(context)
+    ~~~~~~~~~^^^^^^^^^
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 216, in run
+    res = subprocess.run([context.args.transcribe_script, str(item.audio_path)])
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 554, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1038, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1989, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'gensrt.sh'
+Traceback (most recent call last):
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 452, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 444, in main
+    stage.run(context)
+    ~~~~~~~~~^^^^^^^^^
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 216, in run
+    res = subprocess.run([context.args.transcribe_script, str(item.audio_path)])
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 554, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1038, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1989, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'gensrt.sh'
+Traceback (most recent call last):
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 452, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 444, in main
+    stage.run(context)
+    ~~~~~~~~~^^^^^^^^^
+  File "/Users/willard/Developer/WhisperSummarize-Flow/pipeline/run_daily_pipeline.py", line 216, in run
+    res = subprocess.run([context.args.transcribe_script, str(item.audio_path)])
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 554, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1038, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 1989, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'gensrt.sh'
