@@ -52,7 +52,15 @@ PY
 # --- Main ---
 [[ $# -ne 1 ]] && { echo "Usage: $0 AUDIO_FILE"; exit 1; }
 audio_path="$1"
-wav_path="${audio_path%.*}.wav"
+output_base="${audio_path%.*}"
+output_srt="$output_base.srt.txt"
+
+if [[ -f "$output_srt" ]]; then
+  echo "Output file already exists, skipping: $output_srt"
+  exit 0
+fi
+
+wav_path="$output_base.wav"
 
 acquire_lock
 

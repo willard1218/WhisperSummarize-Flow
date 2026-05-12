@@ -10,6 +10,8 @@ output/
 *.mail-sent
 
 # Runtime logs
+*.log
+launchd_state/*.log
 launchd_download_and_transcribe.log
 launchd_stdout.log
 launchd_stderr.log

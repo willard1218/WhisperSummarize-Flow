@@ -73,6 +73,8 @@ def send_telegram_msg(message: str) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     
+    print(f"DEBUG: send_telegram_msg called. chat_id={chat_id}, token_exists={bool(token)}")
+
     if not token or not chat_id:
         print("Telegram notification skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set.")
         return False

@@ -6,6 +6,8 @@ import re
 import subprocess
 import sys
 import time
+import fcntl
+import hashlib
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -224,11 +226,15 @@ class TranscribeStage(BasePipelineStage):
         for item in context.items:
             if not item.audio_path or item.failed: continue
             t_start = time.monotonic()
-            existing = transcript_path_for(item.audio_path) if item.audio_path.suffix == ".mp3" else None
-            if existing and existing.exists(): 
+            
+            # Check for existing transcript or summary (idempotency)
+            existing = transcript_path_for(item.audio_path)
+            summary_hant = existing.with_name(existing.name.replace(".srt.txt", ".zh-Hant.summary.md"))
+            
+            if (existing and existing.exists()) or (summary_hant and summary_hant.exists()): 
                 item.transcript_path = existing
                 self.log_event("transcribe", "ok", 0, item.label, existing.name)
-                context.report_status(f"⏭️ 轉錄已存在: {item.label}")
+                context.report_status(f"⏭️ 轉錄已存在 (或摘要已完成): {item.label}")
             else:
                 res = subprocess.run([context.args.transcribe_script, str(item.audio_path)])
                 item.transcript_path = transcript_path_for(item.audio_path)
@@ -423,8 +429,26 @@ def main() -> int:
     parser.add_argument("--enable-mail", type=int, default=int(os.environ.get("ENABLE_MAIL", "1")))
     parser.add_argument("--enable-telegram", type=int, default=int(os.environ.get("ENABLE_TELEGRAM", "1")))
     parser.add_argument("--telegram-progress", dest="telegram_progress", action="store_true", help="Send real-time progress to Telegram")
+    parser.add_argument("--telegram-chat-id", help="Override default Telegram chat ID")
     
     args = parser.parse_args()
+    if args.telegram_chat_id:
+        os.environ["TELEGRAM_CHAT_ID"] = args.telegram_chat_id
+    
+    # --- File Locking Mechanism ---
+    # Create a lock based on the command line arguments to prevent concurrent runs for same task
+    lock_key = hashlib.md5(str(sys.argv[1:]).encode()).hexdigest()
+    lock_file_path = Path(f"/tmp/whisper_pipeline_{lock_key}.lock")
+    
+    try:
+        lock_file = open(lock_file_path, "w")
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file.write(str(os.getpid()))
+        lock_file.flush()
+    except (IOError, OSError):
+        print(f"Another instance is already running for these arguments (Lock: {lock_file_path}). Skipping.")
+        return 0
+
     root = Path(args.output_root).expanduser().resolve()
 
     items = build_items(args, root)

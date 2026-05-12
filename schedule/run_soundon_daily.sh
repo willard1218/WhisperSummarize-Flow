@@ -48,7 +48,7 @@ fi
 if [[ -n "${FFMPEG_BIN_DIR:-}" ]]; then
   export PATH="$FFMPEG_BIN_DIR:$PATH"
 fi
-export GENSRT_SCRIPT="${GENSRT_SCRIPT:-gensrt.sh}"
+export GENSRT_SCRIPT="${GENSRT_SCRIPT:-$BASE_DIR/gensrt.sh}"
 export PYTHON_BIN="${PYTHON_BIN:-python3}"
 export RECIPIENT_CONFIG_FILE="${RECIPIENT_CONFIG_FILE:-$BASE_DIR/config/recipient_groups.local.json}"
 export OPENCC_TRADITIONALIZE="${OPENCC_TRADITIONALIZE:-0}"

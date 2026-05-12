@@ -93,7 +93,7 @@ def answer_callback_query(callback_query_id, text=None):
 
 URL_PATTERN = re.compile(r'https?://(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)')
 
-def run_pipeline(url):
+def run_pipeline(url, chat_id):
     """Executes the pipeline script in the background."""
     script_path = BASE_DIR / "pipeline" / "run_daily_pipeline.py"
     # Execute with python3 to ensure environment is correct
@@ -105,7 +105,8 @@ def run_pipeline(url):
         "--enable-summarize", "1",
         "--enable-mail", "1",
         "--enable-telegram", "1",
-        "--telegram-progress"
+        "--telegram-progress",
+        "--telegram-chat-id", str(chat_id)
     ]
     # We use Popen so the listener doesn't block while the pipeline runs
     subprocess.Popen(cmd, cwd=str(BASE_DIR))
@@ -148,6 +149,7 @@ def handle_update(update):
         msg = update["message"]
         chat_id = str(msg.get("chat", {}).get("id"))
         text = msg.get("text", "")
+        print(f"Incoming message from chat_id: {chat_id}")
 
         if OWNER_CHAT_ID and chat_id != OWNER_CHAT_ID:
             print(f"Ignored message from unauthorized chat: {chat_id}")
@@ -187,7 +189,7 @@ def handle_update(update):
             answer_callback_query(cb_id, "任務已啟動！")
             edit_message_reply_markup(chat_id, message_id, reply_markup=None)
             send_message(chat_id, f"🚀 已啟動任務：\n{url}\n完成後將自動發送通知。")
-            run_pipeline(url)
+            run_pipeline(url, chat_id)
         elif data == "cancel":
             answer_callback_query(cb_id, "已取消")
             edit_message_reply_markup(chat_id, message_id, reply_markup=None)
