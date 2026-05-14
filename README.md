@@ -12,8 +12,8 @@
 
 ## 核心流程
 
-1. **下載**: 自動追蹤已註冊的 Podcast RSS 或 YouTube 頻道。
-2. **轉錄**: 透過 `gensrt.sh` 進行語音轉文字。
+1. **下載/接收**: 自動追蹤已註冊的 Podcast/YouTube，或直接透過 Telegram 傳送**語音訊息/音訊檔案**。
+2. **轉錄**: 透過 `WhisperKit` (GPU) 或 `gensrt.sh` 進行語音轉文字（支援語者辨識）。
 3. **處理**: 簡繁轉換 (OpenCC) 與 AI 摘要 (Gemini)。
 4. **通知**: 透過 Telegram、SMTP 或 Apple Mail 發送結果。
 

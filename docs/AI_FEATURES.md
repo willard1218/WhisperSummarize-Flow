@@ -1,9 +1,20 @@
-# AI 摘要功能 (Summarization)
+# AI 核心功能 (AI Features)
 
-專案支援多種 AI 模型，能自動對逐字稿進行分析、修正錯字並產出繁體中文總結。
+本專案整合了多種 AI 技術，涵蓋語音轉文字（轉錄）與文字摘要。
 
-## 支援模型
+## 轉錄引擎 (Transcription) —— **新功能！**
 
+系統支援多種轉錄後端，可透過 `--transcriber-type` 參數切換：
+
+1.  **WhisperKit (預設)**: 針對 Apple Silicon (M1/M2/M3) 優化的轉錄引擎。
+    *   **優點**: 速度極快（利用 GPU/Neural Engine），支援**語者辨識 (Diarization)**。
+    *   **產出**: 自動區分主持人與來賓（標註為 SPEAKER 1, SPEAKER 2...）。
+2.  **Whisper.cpp (`gensrt.sh`)**: 跨平台的 C/C++ 實作。
+    *   **優點**: 資源佔用低，支援多種 Model 尺寸（如 `large-v3`）。
+    *   **限制**: 目前暫不支援語者辨識。
+
+## 摘要功能 (Summarization)
+...
 系統採用優先序機制，可透過環境變數動態切換：
 
 1.  **Ollama (本地)**: 若設定 `ENABLE_OLLAMA="1"`，則優先使用本地模型（預設為 `qwen2.5:7b`）。這對於保護隱私與節省雲端配額非常有用。
