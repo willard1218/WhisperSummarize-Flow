@@ -43,7 +43,20 @@ python3 tools/register_youtube_channel.py 'URL' --recipient-group 'GROUP'
 
 - `tools/dump_daily_plan.py`: 預覽當日執行計畫（查看誰會被下載、誰會被通知）。
 - `tools/telegram_listener.py`: **Telegram Bot 互動監聽器**。
-  - **URL 啟動**：直接將影片網址傳給 Bot。
-  - **語音轉錄**：直接傳送「語音訊息」或「音訊檔案」(.m4a, .mp3 等) 給 Bot，它會自動下載並開始轉錄。
+  - **URL 啟動**：直接將 YouTube 或 SoundOn 網址傳給 Bot。Bot 會先回覆確認按鈕；按下「確認執行」後才會建立任務。
+  - **忙碌狀態**：若目前已有轉錄工作持有 lock，Bot 會顯示「忙碌中」，新任務仍可確認並排隊。
+  - **媒體轉錄**：直接傳送「語音訊息」、「音訊檔案」或「視訊檔案」(`.m4a`, `.mp3`, `.wav`, `.ogg`, `.flac`, `.aac`, `.mp4`, `.mov`, `.mkv`) 給 Bot，它會自動下載並開始轉錄。
+  - **授權限制**：若 `TELEGRAM_CHAT_ID` 有設定，只有該 chat 可觸發流程。
 - `schedule/update_schedule.sh`: 修改 `launchd` 排程時間（macOS）。
 - `gensrt.sh`: 核心轉錄引擎。整合了 Whisper 與全域鎖，確保轉錄過程不衝突且具備斷點續傳能力。
+
+## 輸出目錄規則
+
+- 訂閱 Podcast: `output/podcast/<podcast_title>/`
+- 訂閱 YouTube: `output/youtube/<channel_name>/`
+- Telegram 音檔: `output/telegram/audio/<task_id>/`
+- Telegram 影片檔: `output/telegram/video/<task_id>/`
+- Telegram YouTube 網址: `output/telegram/youtube/<video_id>/`
+- Telegram Podcast 網址: `output/telegram/podcast/<podcast_slug>/`
+
+同一任務的音檔、逐字稿、摘要、寄送標記會集中放在同一個任務資料夾內；Telegram 任務另外會保存 `metadata.json`。

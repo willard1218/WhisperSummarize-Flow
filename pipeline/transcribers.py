@@ -1,7 +1,6 @@
 import subprocess
-import time
 import os
-import sys
+import json
 from pathlib import Path
 from abc import ABC, abstractmethod
 
@@ -76,43 +75,45 @@ class WhisperKitTranscriber(BaseTranscriber):
         return None
 
     def _process_report(self, report_json: Path, original_audio: Path) -> Path | None:
-        import json
         try:
-            with open(report_json, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            segments = data.get("segments", [])
-            
-            # Generate .srt.txt format
-            srt_path = original_audio.with_suffix(".srt.txt")
-            txt_path = original_audio.with_suffix(".txt")
-            
-            with open(srt_path, 'w', encoding='utf-8') as fs, open(txt_path, 'w', encoding='utf-8') as ft:
-                for i, seg in enumerate(segments, 1):
-                    start = seg.get("start", 0)
-                    end = seg.get("end", 0)
-                    text = seg.get("text", "").strip()
-                    speaker = seg.get("speaker", None)
-                    
-                    # Format time: 00:00:00,000
-                    def format_time(s):
-                        hours = int(s // 3600)
-                        minutes = int((s % 3600) // 60)
-                        seconds = int(s % 60)
-                        millis = int((s - int(s)) * 1000)
-                        return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
-                    
-                    line_text = text
-                    if speaker:
-                        line_text = f"[{speaker}] {text}"
-                    
-                    fs.write(f"{i}\n")
-                    fs.write(f"{format_time(start)} --> {format_time(end)}\n")
-                    fs.write(f"{line_text}\n\n")
-                    
-                    ft.write(f"{line_text}\n")
-            
-            return srt_path
+            data = json.loads(report_json.read_text(encoding="utf-8"))
+            return WhisperKitReportWriter(original_audio).write(data.get("segments", []))
         except Exception as e:
             print(f"Error processing WhisperKit report: {e}")
             return None
+
+
+class WhisperKitReportWriter:
+    def __init__(self, original_audio: Path):
+        self.original_audio = original_audio
+
+    @staticmethod
+    def format_time(seconds_value: float) -> str:
+        hours = int(seconds_value // 3600)
+        minutes = int((seconds_value % 3600) // 60)
+        seconds = int(seconds_value % 60)
+        millis = int((seconds_value - int(seconds_value)) * 1000)
+        return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
+
+    @staticmethod
+    def render_line(segment: dict) -> str:
+        text = segment.get("text", "").strip()
+        speaker = segment.get("speaker")
+        return f"[{speaker}] {text}" if speaker else text
+
+    def write(self, segments: list[dict]) -> Path:
+        srt_path = self.original_audio.with_suffix(".srt.txt")
+        txt_path = self.original_audio.with_suffix(".txt")
+
+        with open(srt_path, "w", encoding="utf-8") as srt_handle, open(txt_path, "w", encoding="utf-8") as txt_handle:
+            for index, segment in enumerate(segments, 1):
+                start = segment.get("start", 0)
+                end = segment.get("end", 0)
+                line_text = self.render_line(segment)
+
+                srt_handle.write(f"{index}\n")
+                srt_handle.write(f"{self.format_time(start)} --> {self.format_time(end)}\n")
+                srt_handle.write(f"{line_text}\n\n")
+                txt_handle.write(f"{line_text}\n")
+
+        return srt_path

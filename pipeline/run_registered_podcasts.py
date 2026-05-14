@@ -3,7 +3,6 @@
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -14,9 +13,10 @@ from typing import Iterable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from download_latest_podcast import fetch_bytes, sanitize_filename
+from download_latest_podcast import fetch_bytes
 from recipient_groups import resolve_emails, load_recipient_groups
 from notifier import marker_path_for, send_mail
+from output_paths import podcast_directory_name, subscribed_podcast_output_dir
 
 NO_EPISODE_EXIT_CODE = 2
 
@@ -33,15 +33,6 @@ def load_subscriptions(path: Path) -> list[dict]:
     subscriptions = data.get("subscriptions", [])
     return [item for item in subscriptions if isinstance(item, dict)]
 
-def make_podcast_slug(rss_url: str) -> str:
-    tail = rss_url.rstrip("/").rsplit("/", 1)[-1]
-    base = tail.rsplit(".", 1)[0]
-    cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", base).strip("-").lower()
-    return cleaned or "podcast"
-
-def sanitize_slug_part(value: str) -> str:
-    return sanitize_filename(value).replace(" ", "-").strip("-")
-
 def resolve_podcast_title(rss_url: str) -> str:
     rss_data = fetch_bytes(rss_url)
     root = ET.fromstring(rss_data)
@@ -49,9 +40,8 @@ def resolve_podcast_title(rss_url: str) -> str:
     return (channel.findtext("title") or "").strip() if channel is not None else ""
 
 def make_podcast_output_dir_name(rss_url: str, podcast_title: str) -> str:
-    slug = make_podcast_slug(rss_url)
-    title_slug = sanitize_slug_part(podcast_title)
-    return f"{title_slug}__{slug}" if title_slug else slug
+    del rss_url
+    return podcast_directory_name(podcast_title, fallback="podcast")
 
 def parse_audio_path(output: str) -> Path | None:
     for line in output.splitlines():
@@ -101,7 +91,7 @@ def main() -> int:
         if not rss_url or not emails: continue
 
         title = sub.get("podcast_title", "").strip() or resolve_podcast_title(rss_url)
-        out_dir = output_root / make_podcast_output_dir_name(rss_url, title)
+        out_dir = subscribed_podcast_output_dir(output_root, title or "podcast")
         out_dir.mkdir(parents=True, exist_ok=True)
 
         res = download_single_podcast(rss_url, out_dir, args.run_date, downloader, title)

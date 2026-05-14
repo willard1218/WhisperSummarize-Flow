@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from recipient_groups import resolve_emails, load_recipient_groups
+from output_paths import subscribed_youtube_output_dir, youtube_channel_directory_name
 
 def load_subscriptions(path: Path) -> list[dict]:
     if not path.exists():
@@ -21,9 +22,7 @@ def load_subscriptions(path: Path) -> list[dict]:
     return [item for item in subscriptions if isinstance(item, dict)]
 
 def make_channel_slug(channel_url: str) -> str:
-    tail = channel_url.rstrip("/").rsplit("/", 2)[0].rsplit("/", 1)[-1]
-    cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", tail).strip("-").lower()
-    return cleaned or "youtube-channel"
+    return youtube_channel_directory_name(channel_url)
 
 def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True)
@@ -92,7 +91,7 @@ def main() -> int:
         env["DEBUG_RECIPIENT"] = debug_email or ""
 
         res = subprocess.run([
-            "/bin/bash", str(runner), url, str(output_root / make_channel_slug(url)),
+            "/bin/bash", str(runner), url, str(subscribed_youtube_output_dir(output_root, url)),
             ",".join(emails), args.transcribe_script
         ], text=True, capture_output=True, env=env)
         

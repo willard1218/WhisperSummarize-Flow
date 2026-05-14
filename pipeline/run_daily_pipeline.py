@@ -9,7 +9,7 @@ import time
 import fcntl
 import hashlib
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import List
 
@@ -19,9 +19,18 @@ sys.path.insert(0, str(BASE_DIR / "tools"))
 sys.path.insert(0, str(BASE_DIR / "pipeline"))
 
 from recipient_groups import load_recipient_groups, resolve_emails
+from local_config import load_local_config as load_env_file
+from output_paths import (
+    infer_podcast_slug,
+    subscribed_podcast_output_dir,
+    subscribed_youtube_output_dir,
+    telegram_media_output_dir,
+    telegram_url_output_dir,
+    write_task_metadata,
+    youtube_video_id,
+)
 from run_registered_podcasts import (
     load_subscriptions as load_podcast_subs,
-    make_podcast_output_dir_name,
     parse_audio_path,
     parse_run_date,
     resolve_podcast_title,
@@ -31,7 +40,6 @@ from run_registered_podcasts import (
 )
 from run_registered_youtube import (
     load_subscriptions as load_youtube_subs,
-    make_channel_slug,
     resolve_youtube_latest,
     find_youtube_audio,
     download_youtube_video,
@@ -349,33 +357,8 @@ class NotificationStage(BasePipelineStage):
 
 # --- Configuration & Setup ---
 
-def load_local_config():
-    config_path = BASE_DIR / "config" / "local_config.sh"
-    if config_path.exists():
-        content = config_path.read_text()
-        for line in content.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"): continue
-            
-            # Remove 'export ' prefix if present
-            PREFIX = "export "
-            if line.startswith(PREFIX):
-                line = line[len(PREFIX):].strip()
-            
-            if "=" in line:
-                try:
-                    # Split only on first '=' and remove comments
-                    kv_part = line.split("#", 1)[0].strip()
-                    key, value = kv_part.split("=", 1)
-                    value = value.strip().strip('"').strip("'")
-                    
-                    # Handle PATH variable specifically (append/prepend)
-                    if key == "PATH":
-                        os.environ["PATH"] = value.replace("$PATH", os.environ.get("PATH", ""))
-                    else:
-                        os.environ[key] = value
-                except ValueError:
-                    continue
+def load_local_config() -> None:
+    load_env_file(BASE_DIR / "config" / "local_config.sh", os.environ)
 
 def build_items(args, root: Path) -> List[DailyItem]:
     groups = load_recipient_groups(Path(args.recipient_config).expanduser().resolve())
@@ -386,13 +369,16 @@ def build_items(args, root: Path) -> List[DailyItem]:
         emails = resolve_emails({"recipient_group": args.recipient_group}, groups)
         # Identify kind
         kind = "youtube" if "youtube.com" in args.url or "youtu.be" in args.url else "podcast"
-        
-        output_dir = root / "adhoc"
-        if kind == "youtube":
-            # For ad-hoc youtube, we don't have a slug yet, use video ID if possible
-            vid_match = re.search(r"v=([a-zA-Z0-9_-]+)", args.url) or re.search(r"be/([a-zA-Z0-9_-]+)", args.url)
-            vid = vid_match.group(1) if vid_match else "unknown"
-            output_dir = root / f"adhoc_yt_{vid}"
+
+        if getattr(args, "task_origin", "") == "telegram":
+            output_dir = telegram_url_output_dir(root, args.url)
+        else:
+            output_dir = root / "adhoc"
+            if kind == "youtube":
+                vid = youtube_video_id(args.url) or "unknown"
+                output_dir = root / f"adhoc_yt_{vid}"
+            else:
+                output_dir = root / f"adhoc_podcast_{infer_podcast_slug(args.url)}"
         
         items.append(DailyItem(
             label="Ad-hoc Task", 
@@ -408,8 +394,8 @@ def build_items(args, root: Path) -> List[DailyItem]:
         local_path = Path(args.local_file).expanduser().resolve()
         emails = resolve_emails({"recipient_group": args.recipient_group}, groups)
         
-        # Determine kind based on extension or just label as voice
-        kind = "voice"
+        suffix = local_path.suffix.lower()
+        kind = "video" if suffix in {".mp4", ".mov", ".mkv"} else "voice"
         output_dir = local_path.parent
         
         item = DailyItem(
@@ -432,12 +418,33 @@ def build_items(args, root: Path) -> List[DailyItem]:
         rss = sub.get("rss_url", "").strip()
         title = sub.get("podcast_title", "").strip() or (resolve_podcast_title(rss) if rss else "")
         prompt_file = Path(sub["prompt_file"]) if sub.get("prompt_file") else None
-        items.append(DailyItem(f"Podcast {i}", "podcast", sub.get("podcast_url", rss), resolve_emails(sub, groups), root / make_podcast_output_dir_name(rss, title), prompt_file=prompt_file, title=title))
+        items.append(DailyItem(f"Podcast {i}", "podcast", sub.get("podcast_url", rss), resolve_emails(sub, groups), subscribed_podcast_output_dir(root, title or "podcast"), prompt_file=prompt_file, title=title))
     for i, sub in enumerate(load_youtube_subs(yt_cfg), 1):
         url = sub.get("channel_url", "").strip()
         prompt_file = Path(sub["prompt_file"]) if sub.get("prompt_file") else None
-        items.append(DailyItem(f"YouTube {i}" if i > 1 else "YouTube", "youtube", url, resolve_emails(sub, groups), root / make_channel_slug(url), prompt_file=prompt_file))
+        items.append(DailyItem(f"YouTube {i}" if i > 1 else "YouTube", "youtube", url, resolve_emails(sub, groups), subscribed_youtube_output_dir(root, url), prompt_file=prompt_file))
     return items
+
+
+def write_task_metadata_for_items(items: List[DailyItem], args) -> None:
+    if getattr(args, "task_origin", "") != "telegram":
+        return
+
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    created_at = datetime.now().astimezone().isoformat()
+    for item in items:
+        payload = {
+            "task_origin": args.task_origin,
+            "kind": item.kind,
+            "source_url": item.source_url,
+            "created_at": created_at,
+            "chat_id": chat_id,
+            "title": item.title,
+            "label": item.label,
+        }
+        if item.kind == "youtube":
+            payload["video_id"] = youtube_video_id(item.source_url) or ""
+        write_task_metadata(item.output_dir, payload)
 
 import concurrent.futures
 import threading
@@ -586,6 +593,7 @@ def main() -> int:
     parser.add_argument("--telegram-chat-id", help="Override default Telegram chat ID")
     parser.add_argument("--concurrency", type=int, default=4, help="Number of concurrent downloads/summaries")
     parser.add_argument("--transcriber-type", default="whisperkit", choices=["whisperkit", "whispercpp"], help="Transcriber engine to use")
+    parser.add_argument("--task-origin", default="default", choices=["default", "telegram"], help="Origin of the ad-hoc task for output routing")
     
     args = parser.parse_args()
     if args.telegram_chat_id:
@@ -593,6 +601,7 @@ def main() -> int:
     
     root = Path(args.output_root).expanduser().resolve()
     items = build_items(args, root)
+    write_task_metadata_for_items(items, args)
     
     if args.debug:
         debug_email = os.environ.get("DEBUG_RECIPIENT")
