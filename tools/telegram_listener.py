@@ -93,13 +93,11 @@ def answer_callback_query(callback_query_id, text=None):
 
 URL_PATTERN = re.compile(r'https?://(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)')
 
-def run_pipeline(url, chat_id):
+def run_pipeline(url=None, chat_id=None, local_file=None):
     """Executes the pipeline script in the background."""
     script_path = BASE_DIR / "pipeline" / "run_daily_pipeline.py"
-    # Execute with python3 to ensure environment is correct
     cmd = [
         sys.executable, str(script_path),
-        "--url", url,
         "--recipient-group", "all",
         "--enable-transcribe", "1",
         "--enable-summarize", "1",
@@ -108,43 +106,29 @@ def run_pipeline(url, chat_id):
         "--telegram-progress",
         "--telegram-chat-id", str(chat_id)
     ]
+    if url:
+        cmd += ["--url", url]
+    elif local_file:
+        cmd += ["--local-file", str(local_file)]
+    
     # We use Popen so the listener doesn't block while the pipeline runs
     subprocess.Popen(cmd, cwd=str(BASE_DIR))
 
-def get_transcribe_status():
-    """Checks the global lock to see if a transcription is in progress."""
-    lock_dir = Path(os.environ.get("TMPDIR", "/tmp")) / "gensrt.lock"
-    if lock_dir.exists():
-        pid_file = lock_dir / "pid"
-        if pid_file.exists():
-            pid = pid_file.read_text().strip()
-            return f"🔴 忙碌中 (正在轉錄 PID: {pid})"
-    return "🟢 空閒 (隨時可以執行)"
-
-def format_url_for_display(url):
-    """Formats a URL for display to avoid Telegram link previews."""
-    try:
-        parsed = urllib.parse.urlparse(url)
-        if "youtube.com" in parsed.netloc or "youtu.be" in parsed.netloc:
-            # Handle youtu.be/xxx -> youtube.com/watch?v=xxx
-            if "youtu.be" in parsed.netloc:
-                return f"[youtube] watch?v={parsed.path.lstrip('/')}"
-            
-            # Handle youtube.com/watch?v=xxx
-            path_query = parsed.path.lstrip('/')
-            if parsed.query:
-                path_query += f"?{parsed.query}"
-            return f"[youtube] {path_query}"
-        elif "soundon.fm" in parsed.netloc:
-            return f"[soundon] {parsed.path.lstrip('/')}"
-    except Exception:
-        pass
-    return url
+def download_telegram_file(file_id, dest_path):
+    """Downloads a file from Telegram servers."""
+    res = call_api("getFile", {"file_id": file_id})
+    if res and res.get("ok"):
+        file_path = res["result"]["file_path"]
+        url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+        print(f"Downloading {url} to {dest_path}")
+        urllib.request.urlretrieve(url, dest_path)
+        return True
+    return False
 
 def handle_update(update):
     global OWNER_CHAT_ID
     
-    # 1. Handle incoming messages (URL detection & Commands)
+    # 1. Handle incoming messages (URL detection, Commands, Voice)
     if "message" in update:
         msg = update["message"]
         chat_id = str(msg.get("chat", {}).get("id"))
@@ -158,6 +142,59 @@ def handle_update(update):
         if text == "/status":
             status = get_transcribe_status()
             send_message(chat_id, f"目前系統狀態：\n{status}")
+            return
+
+        # Handle Voice/Audio Messages
+        audio_msg = None
+        if "voice" in msg:
+            audio_msg = msg["voice"]
+            kind = "voice"
+            ext = "ogg"
+            orig_name = f"voice_{int(time.time())}.ogg"
+        elif "audio" in msg:
+            audio_msg = msg["audio"]
+            kind = "audio"
+            orig_name = audio_msg.get("file_name", f"audio_{int(time.time())}.mp3")
+            ext = orig_name.split(".")[-1]
+        elif "document" in msg:
+            doc = msg["document"]
+            mime = doc.get("mime_type", "")
+            orig_name = doc.get("file_name", "")
+            if mime.startswith("audio/") or orig_name.lower().endswith((".m4a", ".mp3", ".wav", ".ogg", ".flac", ".aac")):
+                audio_msg = doc
+                kind = "document"
+                if not orig_name:
+                    orig_name = f"doc_{int(time.time())}.m4a"
+                ext = orig_name.split(".")[-1]
+
+        if audio_msg:
+            file_id = audio_msg["file_id"]
+            duration = audio_msg.get("duration", 0)
+            
+            print(f"--- Audio Message Received ---")
+            print(f"Chat ID: {chat_id}")
+            print(f"Kind: {kind}")
+            print(f"Original Name: {orig_name}")
+            print(f"Duration: {duration}s")
+            print(f"File ID: {file_id}")
+            
+            # Clean filename for safety but try to keep some meaning
+            safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", orig_name)
+            if not safe_name or safe_name.startswith("___"):
+                safe_name = f"{kind}_{int(time.time())}.{ext}"
+            
+            voice_dir = BASE_DIR / "output" / "voice"
+            voice_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = voice_dir / safe_name
+            
+            send_message(chat_id, f"🎙️ 收到音訊檔案\n類型：{kind}\n檔名：{orig_name}\n長度：{duration}秒\n\n正在下載並準備轉錄...")
+            
+            if download_telegram_file(file_id, dest_path):
+                print(f"Successfully downloaded to: {dest_path}")
+                run_pipeline(local_file=dest_path, chat_id=chat_id)
+            else:
+                print(f"Failed to download file_id: {file_id}")
+                send_message(chat_id, "❌ 下載檔案失敗。")
             return
 
         urls = URL_PATTERN.findall(text)

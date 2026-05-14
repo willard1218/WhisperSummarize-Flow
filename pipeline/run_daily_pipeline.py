@@ -40,6 +40,16 @@ from run_registered_youtube import (
 from summarize_transcript import summarize_file
 from notifier import get_notifiers, send_telegram_msg
 
+from transcribers import BaseTranscriber, WhisperCPPTranscriber, WhisperKitTranscriber
+
+def get_transcriber(args) -> BaseTranscriber:
+    if args.transcriber_type == "whisperkit":
+        bin_path = os.environ.get("WHISPERKIT_BIN", "/Users/willard/Downloads/WhisperKit/.build/arm64-apple-macosx/release/whisperkit-cli")
+        model_path = os.environ.get("WHISPERKIT_MODEL_PATH")
+        return WhisperKitTranscriber(bin_path, model_path)
+    else:
+        return WhisperCPPTranscriber(args.transcribe_script)
+
 # --- Data Models ---
 
 @dataclass
@@ -393,6 +403,27 @@ def build_items(args, root: Path) -> List[DailyItem]:
         ))
         return items
 
+    # Local file mode
+    if getattr(args, "local_file", None):
+        local_path = Path(args.local_file).expanduser().resolve()
+        emails = resolve_emails({"recipient_group": args.recipient_group}, groups)
+        
+        # Determine kind based on extension or just label as voice
+        kind = "voice"
+        output_dir = local_path.parent
+        
+        item = DailyItem(
+            label="Voice Message",
+            kind=kind,
+            source_url=f"file://{local_path}",
+            emails=emails,
+            output_dir=output_dir,
+            audio_path=local_path,
+            download_ready=True
+        )
+        items.append(item)
+        return items
+
     # Standard subscription mode
     pod_cfg = Path(args.podcast_config).expanduser().resolve()
     yt_cfg = Path(args.youtube_config).expanduser().resolve()
@@ -408,10 +439,133 @@ def build_items(args, root: Path) -> List[DailyItem]:
         items.append(DailyItem(f"YouTube {i}" if i > 1 else "YouTube", "youtube", url, resolve_emails(sub, groups), root / make_channel_slug(url), prompt_file=prompt_file))
     return items
 
+import concurrent.futures
+import threading
+
+# --- Concurrency & Locking ---
+
+class TranscriptionLock:
+    """A file-based lock to ensure only one transcription runs at a time across processes."""
+    def __init__(self, lock_file="/tmp/whisper_transcription.lock"):
+        self.lock_file_path = Path(lock_file)
+        self.lock_file = None
+
+    def __enter__(self):
+        self.lock_file = open(self.lock_file_path, "w")
+        # Acquire an exclusive lock (blocking)
+        fcntl.flock(self.lock_file, fcntl.LOCK_EX)
+        self.lock_file.write(str(os.getpid()))
+        self.lock_file.flush()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.lock_file:
+            fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+            self.lock_file.close()
+
+def process_item_full_lifecycle(item: DailyItem, args, context: PipelineContext, transcribe_lock: TranscriptionLock, transcriber: BaseTranscriber):
+    """Processes a single item through all stages of the pipeline."""
+    # 1. Download (Skip if already ready, e.g. local file)
+    if not item.download_ready:
+        downloaders = [cls() for cls in BaseDownloader.__subclasses__()]
+        handled = False
+        for d in downloaders:
+            if d.can_handle(item):
+                try:
+                    if d.download(item, context):
+                        handled = True
+                        if item.download_ready:
+                            context.report_status(f"✅ 下載完成: {item.label}")
+                    else:
+                        item.failed = True
+                        context.report_status(f"❌ 下載失敗: {item.label}")
+                except Exception as e:
+                    print(f"Error downloading {item.label}: {e}")
+                    item.failed = True
+                break
+        
+        if not handled and not item.failed:
+            item.failed = True
+            context.report_status(f"❌ 錯誤: 找不到支援的下載器 ({item.label})")
+
+    if item.failed or not item.download_ready:
+        return
+
+    # 2. Transcribe (LOCKED)
+    if args.enable_transcribe:
+        existing = transcript_path_for(item.audio_path)
+        summary_hant = existing.with_name(existing.name.replace(".srt.txt", ".zh-Hant.summary.md"))
+        
+        if (existing and existing.exists()) or (summary_hant and summary_hant.exists()): 
+            item.transcript_path = existing
+            context.report_status(f"⏭️ 轉錄已存在: {item.label}")
+        else:
+            context.report_status(f"⏳ 等待轉錄資源: {item.label} ...")
+            with transcribe_lock:
+                context.report_status(f"🎙️ 開始轉錄: {item.label} ({args.transcriber_type})")
+                t_start = time.monotonic()
+                item.transcript_path = transcriber.transcribe(item.audio_path, item.output_dir)
+                if item.transcript_path and item.transcript_path.exists(): 
+                    context.report_status(f"✅ 轉錄完成: {item.label}")
+                    print(f"EVENT transcribe status=ok seconds={time.monotonic()-t_start:.2f} item=\"{item.label}\" detail=\"{item.transcript_path.name}\"")
+                else: 
+                    item.failed = True
+                    context.report_status(f"❌ 轉錄失敗: {item.label}")
+
+    if item.failed or not item.transcript_path:
+        return
+
+    # 3. Traditionalize
+    if args.enable_traditionalize:
+        t_start = time.monotonic()
+        conv_script = BASE_DIR / "tools" / "convert_transcript_opencc.py"
+        # Convert .srt.txt
+        if item.transcript_path.name.endswith(".srt.txt") and not item.transcript_path.name.endswith(".zh-Hant.srt.txt"):
+            hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
+            if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
+                run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
+        
+        # Convert .txt
+        txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
+        if txt_path.exists() and not txt_path.name.endswith(".zh-Hant.txt"):
+            txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
+            if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
+                run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
+        
+        # Update attachment path
+        item.mail_attachment_path = item.transcript_path
+        hant_srt = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
+        if hant_srt.exists():
+            item.mail_attachment_path = hant_srt
+        print(f"EVENT traditionalize status=ok seconds={time.monotonic()-t_start:.2f} item=\"{item.label}\"")
+
+    # 4. Summarize
+    if args.enable_summarize:
+        txt_hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.txt"))
+        txt_plain = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
+        target_txt = txt_hant if (args.enable_traditionalize and txt_hant.exists()) else (txt_plain if txt_plain.exists() else txt_hant)
+        
+        if target_txt and target_txt.exists():
+            t_start = time.monotonic()
+            summary_path = summarize_file(target_txt, item.prompt_file)
+            if summary_path and summary_path.exists():
+                item.mail_body = summary_path.read_text(encoding="utf-8")
+                context.report_status(f"✅ 摘要完成: {item.label}")
+                print(f"EVENT summarize status=ok seconds={time.monotonic()-t_start:.2f} item=\"{item.label}\" detail=\"{summary_path.name}\"")
+            else:
+                context.report_status(f"❌ 摘要失敗: {item.label}")
+
+    # 5. Notify
+    notifiers = get_notifiers()
+    for notifier in notifiers:
+        if notifier.is_enabled(args):
+            notifier.notify([item], args)
+
 def main() -> int:
     load_local_config()
     parser = argparse.ArgumentParser(description="Daily pipeline.")
     parser.add_argument("--url", help="Ad-hoc URL to process (YouTube video or Podcast RSS/Page)")
+    parser.add_argument("--local-file", help="Local audio file to process")
     parser.add_argument("--recipient-group", default="all", help="Recipient group for ad-hoc task")
     parser.add_argument("--date", dest="run_date", type=parse_run_date, default=date.today())
     parser.add_argument("--output-root", default="output")
@@ -430,27 +584,14 @@ def main() -> int:
     parser.add_argument("--enable-telegram", type=int, default=int(os.environ.get("ENABLE_TELEGRAM", "1")))
     parser.add_argument("--telegram-progress", dest="telegram_progress", action="store_true", help="Send real-time progress to Telegram")
     parser.add_argument("--telegram-chat-id", help="Override default Telegram chat ID")
+    parser.add_argument("--concurrency", type=int, default=4, help="Number of concurrent downloads/summaries")
+    parser.add_argument("--transcriber-type", default="whisperkit", choices=["whisperkit", "whispercpp"], help="Transcriber engine to use")
     
     args = parser.parse_args()
     if args.telegram_chat_id:
         os.environ["TELEGRAM_CHAT_ID"] = args.telegram_chat_id
     
-    # --- File Locking Mechanism ---
-    # Create a lock based on the command line arguments to prevent concurrent runs for same task
-    lock_key = hashlib.md5(str(sys.argv[1:]).encode()).hexdigest()
-    lock_file_path = Path(f"/tmp/whisper_pipeline_{lock_key}.lock")
-    
-    try:
-        lock_file = open(lock_file_path, "w")
-        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        lock_file.write(str(os.getpid()))
-        lock_file.flush()
-    except (IOError, OSError):
-        print(f"Another instance is already running for these arguments (Lock: {lock_file_path}). Skipping.")
-        return 0
-
     root = Path(args.output_root).expanduser().resolve()
-
     items = build_items(args, root)
     
     if args.debug:
@@ -458,43 +599,28 @@ def main() -> int:
         if not debug_email:
             print("ERROR: DEBUG_RECIPIENT environment variable is not set.", file=sys.stderr)
             return 1
-        print(f"DEBUG MODE ENABLED: All emails redirected to {debug_email}")
         for item in items: item.emails = [debug_email]
         debug_telegram = os.environ.get("DEBUG_TELEGRAM_CHAT_ID")
-        if debug_telegram:
-            print(f"DEBUG MODE ENABLED: Telegram redirected to {debug_telegram}")
-            os.environ["TELEGRAM_CHAT_ID"] = debug_telegram
+        if debug_telegram: os.environ["TELEGRAM_CHAT_ID"] = debug_telegram
 
     if not items:
         print("No subscriptions found.")
         return 0
 
-    # --- Run Pipeline ---
     context = PipelineContext(args, items)
-    
-    # Define stages (Following OCP: sequence can be changed or extended easily)
-    stages: List[BasePipelineStage] = [
-        DownloadStage(),
-        TranscribeStage(),
-        TraditionalizeStage(),
-        SummarizeStage(),
-        NotificationStage()
-    ]
-    
-    for stage in stages:
-        try:
-            stage.run(context)
-        except Exception as e:
-            error_msg = f"❌ 系統錯誤 ({stage.__class__.__name__}): {str(e)}"
-            print(error_msg)
-            context.report_status(error_msg)
-            context.overall_ok = False
-            break
+    transcribe_lock = TranscriptionLock()
+    transcriber = get_transcriber(args)
+
+    print(f"🚀 Starting concurrent pipeline (concurrency={args.concurrency}, transcriber={args.transcriber_type})")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+        futures = [executor.submit(process_item_full_lifecycle, item, args, context, transcribe_lock, transcriber) for item in items]
+        concurrent.futures.wait(futures)
 
     all_downloaded = all(item.download_ready for item in items)
     print(f"PIPELINE_ALL_DOWNLOADED={'1' if all_downloaded else '0'}")
 
     return 0 if context.overall_ok else 1
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
