@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 
+import os
 import json
 import re
 from pathlib import Path
 
-
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
 
 def load_recipient_groups(path: Path) -> dict[str, list[str]]:
     if not path.exists():
@@ -31,7 +30,6 @@ def load_recipient_groups(path: Path) -> dict[str, list[str]]:
         if cleaned:
             normalized[name] = cleaned
     return normalized
-
 
 def resolve_emails(subscription: dict, groups: dict[str, list[str]]) -> list[str]:
     direct_emails = sorted(
@@ -59,4 +57,14 @@ def resolve_emails(subscription: dict, groups: dict[str, list[str]]) -> list[str
     for name in group_names:
         group_emails.update(groups.get(name, []))
 
-    return sorted(set(direct_emails) | group_emails)
+    resolved = set(direct_emails) | group_emails
+    
+    # Global recipients from environment variable (comma-separated)
+    global_recipients = os.environ.get("GLOBAL_RECIPIENTS", "")
+    if global_recipients:
+        for email in global_recipients.split(","):
+            email = email.strip().lower()
+            if EMAIL_PATTERN.fullmatch(email):
+                resolved.add(email)
+
+    return sorted(resolved)

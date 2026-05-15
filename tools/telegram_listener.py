@@ -203,8 +203,18 @@ class MessageInterpreter:
                 file_id=video["file_id"],
                 kind="video",
                 original_name=original_name,
-                extension=original_name.rsplit(".", 1)[-1],
+                extension=original_name.rsplit(".", 1)[-1] if "." in original_name else "mp4",
                 duration=video.get("duration", 0),
+            )
+
+        if "video_note" in message:
+            video_note = message["video_note"]
+            return MediaMessage(
+                file_id=video_note["file_id"],
+                kind="video_note",
+                original_name=f"video_note_{timestamp}.mp4",
+                extension="mp4",
+                duration=video_note.get("duration", 0),
             )
 
         if "document" in message:

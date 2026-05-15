@@ -122,6 +122,10 @@ class BaseDownloader:
         print(" ".join(parts))
 
 class YouTubeDownloader(BaseDownloader):
+    @staticmethod
+    def should_use_archive(context: PipelineContext) -> bool:
+        return not bool(getattr(context.args, "url", None))
+
     def can_handle(self, item: DailyItem) -> bool:
         return item.kind == "youtube"
     
@@ -141,8 +145,10 @@ class YouTubeDownloader(BaseDownloader):
                 self.log_event("ok", 0, item.label, existing.name)
                 return True
 
+        archive_file = BASE_DIR / "id.txt" if self.should_use_archive(context) else None
+
         if is_direct_video:
-            res = download_youtube_video(item.source_url, item.output_dir, BASE_DIR / "id.txt")
+            res = download_youtube_video(item.source_url, item.output_dir, archive_file)
             if res.stdout: print(res.stdout, end="")
             if vid: item.audio_path = find_youtube_audio(item.output_dir, vid)
         else:
@@ -157,7 +163,7 @@ class YouTubeDownloader(BaseDownloader):
                 item.download_ready = True
                 self.log_event("ok", 0, item.label, existing.name)
                 return True
-            res = download_youtube_video(latest.get("webpage_url", ""), item.output_dir, BASE_DIR / "id.txt")
+            res = download_youtube_video(latest.get("webpage_url", ""), item.output_dir, archive_file)
             if res.stdout: print(res.stdout, end="")
             item.audio_path = find_youtube_audio(item.output_dir, vid)
         

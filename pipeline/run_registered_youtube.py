@@ -41,15 +41,18 @@ def find_youtube_audio(output_dir: Path, video_id: str) -> Path | None:
     matches = sorted(output_dir.glob(f"*__{video_id}.mp3"))
     return matches[0] if matches else None
 
-def download_youtube_video(video_url: str, output_dir: Path, archive_file: Path) -> subprocess.CompletedProcess:
+def download_youtube_video(video_url: str, output_dir: Path, archive_file: Path | None = None) -> subprocess.CompletedProcess:
     yt_dlp_bin = os.environ.get("YT_DLP_BIN", "yt-dlp")
     ffmpeg_bin = os.environ.get("FFMPEG_BIN")
     
     command = [
-        yt_dlp_bin, "--download-archive", str(archive_file), "--no-overwrites",
+        yt_dlp_bin, "--no-overwrites",
         "-f", "bestaudio/best", "-x", "--audio-format", "mp3",
         "--paths", str(output_dir), "-o", "%(title).200B__%(id)s.%(ext)s"
     ]
+
+    if archive_file is not None:
+        command[1:1] = ["--download-archive", str(archive_file)]
     
     if ffmpeg_bin:
         command.extend(["--ffmpeg-location", ffmpeg_bin])

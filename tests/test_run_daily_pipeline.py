@@ -89,6 +89,25 @@ class RunDailyPipelineTests(unittest.TestCase):
             self.assertTrue(item.download_ready)
             download_youtube_video.assert_not_called()
 
+    @patch("pipeline.run_daily_pipeline.find_youtube_audio", return_value=None)
+    @patch("pipeline.run_daily_pipeline.download_youtube_video")
+    def test_youtube_adhoc_download_does_not_use_global_archive(self, download_youtube_video, _find_audio) -> None:
+        item = DailyItem(
+            label="Ad-hoc Task",
+            kind="youtube",
+            source_url="https://youtube.com/watch?v=abc123",
+            emails=[],
+            output_dir=Path("/tmp/output-root/telegram/youtube/abc123"),
+        )
+        download_youtube_video.return_value = SimpleNamespace(stdout="", returncode=0)
+
+        YouTubeDownloader().download(
+            item,
+            SimpleNamespace(args=SimpleNamespace(url=item.source_url)),
+        )
+
+        self.assertIsNone(download_youtube_video.call_args.args[2])
+
 
 if __name__ == "__main__":
     unittest.main()
