@@ -99,6 +99,8 @@ class TelegramApiClient:
         return self.call_api("getFile", {"file_id": file_id})
 
 
+import fcntl
+
 class TranscriptionStatusProvider:
     def __init__(self, lock_paths: list[Path] | None = None):
         self.lock_paths = lock_paths or [
@@ -106,8 +108,50 @@ class TranscriptionStatusProvider:
             Path(os.environ.get("TMPDIR", "/tmp")) / "gensrt.lock",
         ]
 
+    def _is_flock_busy(self, path: Path) -> bool:
+        if not path.exists():
+            return False
+        try:
+            with open(path, "r") as f:
+                # Try to acquire an exclusive lock, non-blocking
+                # If this succeeds, it means no one else has the lock
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                # We got the lock! So it's NOT busy.
+                fcntl.flock(f, fcntl.LOCK_UN)
+                return False
+        except (IOError, BlockingIOError):
+            # Lock is held by someone else
+            return True
+        except Exception:
+            # Fallback to simple existence check if anything weird happens
+            return path.exists()
+
+    def _is_dir_lock_busy(self, path: Path) -> bool:
+        if not path.exists():
+            return False
+        pid_file = path / "pid"
+        if not pid_file.exists():
+            # Directory exists but no pid file? Might be transitioning or stale.
+            return True
+        try:
+            pid = int(pid_file.read_text().strip())
+            # Check if process is alive
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, ValueError, PermissionError):
+            # Process is dead or invalid pid
+            return False
+
     def is_busy(self) -> bool:
-        return any(path.exists() for path in self.lock_paths)
+        # Check whisper_transcription.lock (python flock)
+        if self._is_flock_busy(self.lock_paths[0]):
+            return True
+        
+        # Check gensrt.lock (shell directory lock)
+        if self._is_dir_lock_busy(self.lock_paths[1]):
+            return True
+            
+        return False
 
     def describe(self) -> str:
         return "忙碌中" if self.is_busy() else "空閒中"

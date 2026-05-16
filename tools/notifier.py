@@ -159,7 +159,18 @@ class MailNotifier(BaseNotifier):
                 # Prepare subject and body for a single item
                 title = item.title or item.label
                 subject = f"{title} - {subject_date}"
-                body = item.mail_body if item.mail_body else f"Attached: {item.mail_attachment_path.name}"
+                
+                # Build the body content
+                body_parts = []
+                if item.source_url:
+                    body_parts.append(f"Source URL: {item.source_url}")
+                
+                if item.mail_body:
+                    body_parts.append(item.mail_body)
+                else:
+                    body_parts.append(f"Attached: {item.mail_attachment_path.name}")
+                
+                body = "\n\n".join(body_parts)
                 
                 t_start = time.monotonic()
                 try:
