@@ -41,6 +41,7 @@ python3 tools/register_youtube_channel.py 'URL' --recipient-group 'GROUP'
 
 ## 其他實用腳本
 
+- `tools/check_daily_status.py`: **即時狀態查詢工具**。快速掃描今日所有頻道（Podcast, YouTube, Telegram）的下載、轉錄、摘要與寄信進度。
 - `tools/dump_daily_plan.py`: 預覽當日執行計畫（查看誰會被下載、誰會被通知）。
 - `tools/telegram_listener.py`: **Telegram Bot 互動監聽器**。
   - **URL 啟動**：直接將 YouTube 或 SoundOn 網址傳給 Bot。Bot 會先回覆確認按鈕；按下「確認執行」後才會建立任務。

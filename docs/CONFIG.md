@@ -40,6 +40,12 @@ cp config/youtube_subscriptions.example.json config/youtube_subscriptions.json
    SMTP_USER="你的信箱"
    SMTP_PASS="你的App專用密碼"
    ```
+3. **全域接收者 (Global Recipients)**:
+   如果您希望特定信箱（例如開發者）強制收到**每一封**總結信件，可以使用：
+   ```bash
+   GLOBAL_RECIPIENTS="developer@example.com"
+   ```
+   (多個信箱請用逗號分隔)
 
 ### 2. `config/recipient_groups.local.json`
 定義收件人群組（例如：`all`, `invest`）。您可以為不同節目分配不同的群組。
