@@ -505,9 +505,10 @@ def process_item_full_lifecycle(item: DailyItem, args, context: PipelineContext,
         return
 
     # 2. Transcribe (LOCKED)
+    existing = transcript_path_for(item.audio_path) if item.audio_path else None
+    
     if args.enable_transcribe:
-        existing = transcript_path_for(item.audio_path)
-        summary_hant = existing.with_name(existing.name.replace(".srt.txt", ".zh-Hant.summary.md"))
+        summary_hant = existing.with_name(existing.name.replace(".srt.txt", ".zh-Hant.summary.md")) if existing else None
         
         if (existing and existing.exists()) or (summary_hant and summary_hant.exists()): 
             item.transcript_path = existing
@@ -524,6 +525,19 @@ def process_item_full_lifecycle(item: DailyItem, args, context: PipelineContext,
                 else: 
                     item.failed = True
                     context.report_status(f"❌ 轉錄失敗: {item.label}")
+    else:
+        # If transcription is disabled, still try to find existing transcript to continue
+        if existing and existing.exists():
+            item.transcript_path = existing
+            context.report_status(f"⏭️ 轉錄已存在 (transcribe disabled): {item.label}")
+        else:
+            # Maybe check if .zh-Hant.txt exists directly
+            txt_hant = existing.with_name(existing.name.replace(".srt.txt", ".zh-Hant.txt")) if existing else None
+            if txt_hant and txt_hant.exists():
+                # We can't set srt path easily if it doesn't exist, but summarize only needs target_txt
+                # However, many parts assume transcript_path is the .srt.txt.
+                # Let's just set it to the base one if it exists.
+                item.transcript_path = existing 
 
     if item.failed or not item.transcript_path:
         return
