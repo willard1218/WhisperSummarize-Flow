@@ -180,6 +180,7 @@ def handle_direct_episode(url: str, output_dir: Path, show_title_hint: Optional[
         if enclosure is None or not enclosure.get("url"): return 1
         
         audio_url = enclosure.get("url", "").strip()
+        episode_link = (item.findtext("link") or "").strip()
         filename = sanitize_filename(title)
         show_title = (show_title_hint or feed_title).strip()
         if show_title: filename = f"{sanitize_filename(show_title)} - {filename}"
@@ -193,6 +194,8 @@ def handle_direct_episode(url: str, output_dir: Path, show_title_hint: Optional[
         print(f"Resolved RSS: {rss_url}")
         print(f"Saved: {destination}")
         print(f"Episode title: {title}")
+        if episode_link: print(f"Episode URL: {episode_link}")
+        print(f"Audio URL: {audio_url}")
         return 0
     return 1
 
@@ -268,6 +271,7 @@ def main() -> int:
         return 1
 
     audio_url = enclosure.get("url", "").strip()
+    episode_link = (item.findtext("link") or "").strip()
     filename = sanitize_filename(title)
     show_title = (args.show_title or feed_title).strip()
     if show_title:
@@ -282,6 +286,7 @@ def main() -> int:
         print(f"Resolved RSS: {rss_url}")
         print(f"File already exists: {destination}")
         print(f"Episode title: {title}")
+        if episode_link: print(f"Episode URL: {episode_link}")
         print(f"Audio URL: {audio_url}")
         if args.transcribe_script:
             subprocess.run([context.args.transcribe_script, str(destination)], check=True)
@@ -297,6 +302,7 @@ def main() -> int:
     print(f"Resolved RSS: {rss_url}")
     print(f"Saved: {destination}")
     print(f"Episode title: {title}")
+    if episode_link: print(f"Episode URL: {episode_link}")
     print(f"Audio URL: {audio_url}")
     if args.transcribe_script:
         subprocess.run([args.transcribe_script, str(destination)], check=True)

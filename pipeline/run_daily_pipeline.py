@@ -142,6 +142,9 @@ class YouTubeDownloader(BaseDownloader):
             if existing:
                 item.audio_path = existing
                 item.download_ready = True
+                # If we have a video ID but it was from a channel URL, try to make a watch URL
+                if not is_direct_video:
+                    item.source_url = f"https://www.youtube.com/watch?v={vid}"
                 self.log_event("ok", 0, item.label, existing.name)
                 return True
 
@@ -154,7 +157,14 @@ class YouTubeDownloader(BaseDownloader):
         else:
             latest = resolve_youtube_latest(item.source_url)
             if not latest: return False
-            item.title = latest.get("title", "")
+            
+            # Explicitly set title and specific video URL
+            item.title = latest.get("title", item.title)
+            specific_url = latest.get("webpage_url")
+            if specific_url:
+                print(f"  [YouTube] Resolved specific URL: {specific_url}")
+                item.source_url = specific_url
+            
             vid = latest.get("id", "")
             # Double check existing again after resolution
             existing = find_youtube_audio(item.output_dir, vid)
@@ -163,7 +173,8 @@ class YouTubeDownloader(BaseDownloader):
                 item.download_ready = True
                 self.log_event("ok", 0, item.label, existing.name)
                 return True
-            res = download_youtube_video(latest.get("webpage_url", ""), item.output_dir, archive_file)
+            
+            res = download_youtube_video(item.source_url, item.output_dir, archive_file)
             if res.stdout: print(res.stdout, end="")
             item.audio_path = find_youtube_audio(item.output_dir, vid)
         
@@ -201,6 +212,16 @@ class PodcastDownloader(BaseDownloader):
             return True # Not a failure
         elif res.returncode == 0:
             item.audio_path = parse_audio_path(res.stdout)
+            
+            # Update source_url to specific episode URL if found in output
+            for line in res.stdout.splitlines():
+                if line.startswith("Episode URL: "):
+                    item.source_url = line.split(": ", 1)[1].strip()
+                    break
+                elif line.startswith("Audio URL: ") and "rss.soundon.fm" not in line:
+                    # Fallback to audio URL only if it's not a generic RSS redirect
+                    item.source_url = line.split(": ", 1)[1].strip()
+
             item.download_ready = item.audio_path is not None
             if item.audio_path:
                 self.log_event("ok", time.monotonic()-t_start, item.label, item.audio_path.name)
