@@ -151,6 +151,84 @@ class TelegramListenerTests(unittest.TestCase):
             self.assertEqual(api_client.answered[0], ("cb-1", "任務已啟動"))
             self.assertEqual(launcher.calls[0]["url"], "https://youtube.com/watch?v=abc")
 
+    def test_video_message_downloads_and_launches_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            handler, api_client, launcher, downloader = self.make_handler(temp_dir)
+            handler.handle(
+                {
+                    "message": {
+                        "chat": {"id": "owner"},
+                        "video": {"file_id": "vid-1", "file_name": "movie.mp4", "duration": 30},
+                    }
+                }
+            )
+
+            self.assertEqual(downloader.calls[0][0], "vid-1")
+            self.assertIn("/output/telegram/video/", str(launcher.calls[0]["local_file"]))
+            self.assertTrue(str(launcher.calls[0]["local_file"]).endswith("movie.mp4"))
+            self.assertIn("收到媒體檔案", api_client.sent_messages[0][1])
+
+    def test_video_note_downloads_and_launches_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            handler, api_client, launcher, downloader = self.make_handler(temp_dir)
+            handler.handle(
+                {
+                    "message": {
+                        "chat": {"id": "owner"},
+                        "video_note": {"file_id": "vn-1", "duration": 5},
+                    }
+                }
+            )
+
+            self.assertEqual(downloader.calls[0][0], "vn-1")
+            self.assertIn("/output/telegram/video/", str(launcher.calls[0]["local_file"]))
+            self.assertIn("video_note_", str(launcher.calls[0]["local_file"]))
+
+    def test_caption_url_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            handler, api_client, _, _ = self.make_handler(temp_dir)
+            handler.handle(
+                {
+                    "message": {
+                        "chat": {"id": "owner"},
+                        "caption": "Check this: https://youtube.com/watch?v=xyz",
+                    }
+                }
+            )
+
+            self.assertIn("偵測到網址", api_client.sent_messages[0][1])
+            self.assertIn("https://youtube.com/watch?v=xyz", api_client.sent_messages[0][1])
+
+    def test_transcription_status_provider_real_locks(self) -> None:
+        import fcntl
+        import os
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_file = Path(temp_dir) / "test.lock"
+            dir_lock = Path(temp_dir) / "dir.lock"
+            
+            provider = TranscriptionStatusProvider(lock_paths=[lock_file, dir_lock])
+            
+            # 1. Idle
+            self.assertEqual(provider.describe(), "空閒中")
+            
+            # 2. Flock busy
+            with open(lock_file, "w") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                self.assertEqual(provider.describe(), "忙碌中")
+            
+            # 3. Flock stale (file exists but no lock)
+            lock_file.touch()
+            self.assertEqual(provider.describe(), "空閒中")
+            
+            # 4. Dir lock busy (process alive)
+            dir_lock.mkdir()
+            (dir_lock / "pid").write_text(str(os.getpid()))
+            self.assertEqual(provider.describe(), "忙碌中")
+            
+            # 5. Dir lock stale (process dead)
+            (dir_lock / "pid").write_text("999999") # Hopefully dead
+            self.assertEqual(provider.describe(), "空閒中")
+
     def test_poller_advances_offset_even_when_handler_raises(self) -> None:
         api_client = FakeApiClient()
         api_client.updates = {"ok": True, "result": [{"update_id": 3, "message": {}}, {"update_id": 4, "message": {}}]}

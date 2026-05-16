@@ -74,7 +74,7 @@ def telegram_url_output_dir(base_output_root: Path, url: str) -> Path:
 
 def telegram_media_output_dir(base_output_root: Path, media_kind: str, original_name: str, now: datetime | None = None) -> Path:
     timestamp = (now or datetime.now()).strftime("%Y%m%d_%H%M%S")
-    bucket = "video" if media_kind == "video" else "audio"
+    bucket = "video" if media_kind in ("video", "video_note") else "audio"
     stem = Path(original_name).stem if original_name else media_kind
     slug = slugify_segment(stem, fallback=media_kind)
     return base_output_root / "telegram" / bucket / f"{timestamp}_{slug}"
