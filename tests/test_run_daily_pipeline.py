@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from pipeline.run_daily_pipeline import DailyItem, YouTubeDownloader, build_items
+from pipeline.run_registered_youtube import YouTubeSyncResult
 
 
 class RunDailyPipelineTests(unittest.TestCase):
@@ -68,12 +69,18 @@ class RunDailyPipelineTests(unittest.TestCase):
 
         self.assertEqual(items[0].output_dir, Path("/tmp/output-root/telegram/youtube/abc123"))
 
-    @patch("pipeline.run_daily_pipeline.download_youtube_video")
-    def test_youtube_downloader_reuses_existing_audio(self, download_youtube_video) -> None:
+    @patch("pipeline.run_daily_pipeline.sync_youtube_latest")
+    def test_youtube_downloader_reuses_existing_audio(self, mock_sync) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
             existing_audio = output_dir / "title__abc123.mp3"
-            existing_audio.write_text("", encoding="utf-8")
+            
+            mock_sync.return_value = YouTubeSyncResult(
+                audio_path=existing_audio,
+                success=True,
+                already_exists=True
+            )
+            
             item = DailyItem(
                 label="Ad-hoc Task",
                 kind="youtube",
@@ -82,16 +89,15 @@ class RunDailyPipelineTests(unittest.TestCase):
                 output_dir=output_dir,
             )
 
-            ok = YouTubeDownloader().download(item, SimpleNamespace())
+            ok = YouTubeDownloader().download(item, SimpleNamespace(args=SimpleNamespace(url=None)))
 
             self.assertTrue(ok)
             self.assertEqual(item.audio_path, existing_audio)
             self.assertTrue(item.download_ready)
-            download_youtube_video.assert_not_called()
+            mock_sync.assert_called_once()
 
-    @patch("pipeline.run_daily_pipeline.find_youtube_audio", return_value=None)
-    @patch("pipeline.run_daily_pipeline.download_youtube_video")
-    def test_youtube_adhoc_download_does_not_use_global_archive(self, download_youtube_video, _find_audio) -> None:
+    @patch("pipeline.run_daily_pipeline.sync_youtube_latest")
+    def test_youtube_adhoc_download_does_not_use_global_archive(self, mock_sync) -> None:
         item = DailyItem(
             label="Ad-hoc Task",
             kind="youtube",
@@ -99,14 +105,15 @@ class RunDailyPipelineTests(unittest.TestCase):
             emails=[],
             output_dir=Path("/tmp/output-root/telegram/youtube/abc123"),
         )
-        download_youtube_video.return_value = SimpleNamespace(stdout="", returncode=0)
+        mock_sync.return_value = YouTubeSyncResult(success=True)
 
         YouTubeDownloader().download(
             item,
             SimpleNamespace(args=SimpleNamespace(url=item.source_url)),
         )
 
-        self.assertIsNone(download_youtube_video.call_args.args[2])
+        # verify use_archive=False was passed to sync_youtube_latest
+        self.assertFalse(mock_sync.call_args.kwargs["use_archive"])
 
 
 if __name__ == "__main__":

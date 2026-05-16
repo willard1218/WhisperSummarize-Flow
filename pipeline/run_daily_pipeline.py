@@ -31,18 +31,14 @@ from output_paths import (
 )
 from run_registered_podcasts import (
     load_subscriptions as load_podcast_subs,
-    parse_audio_path,
     parse_run_date,
     resolve_podcast_title,
     transcript_path_for,
-    download_single_podcast,
-    NO_EPISODE_EXIT_CODE
+    sync_podcast_latest
 )
 from run_registered_youtube import (
     load_subscriptions as load_youtube_subs,
-    resolve_youtube_latest,
-    find_youtube_audio,
-    download_youtube_video,
+    sync_youtube_latest,
     run_command
 )
 from summarize_transcript import summarize_file
@@ -131,57 +127,23 @@ class YouTubeDownloader(BaseDownloader):
     
     def download(self, item: DailyItem, context: PipelineContext) -> bool:
         t_start = time.monotonic()
-        is_direct_video = "watch?v=" in item.source_url or "youtu.be/" in item.source_url
+        use_archive = self.should_use_archive(context)
         
-        # Extract Video ID first to check for existing files
-        vid_match = re.search(r"v=([a-zA-Z0-9_-]+)", item.source_url) or re.search(r"be/([a-zA-Z0-9_-]+)", item.source_url)
-        vid = vid_match.group(1) if vid_match else None
+        # Delegate specific resolution and download logic to platform module
+        res = sync_youtube_latest(item.source_url, item.output_dir, use_archive=use_archive)
         
-        if vid:
-            existing = find_youtube_audio(item.output_dir, vid)
-            if existing:
-                item.audio_path = existing
-                item.download_ready = True
-                # If we have a video ID but it was from a channel URL, try to make a watch URL
-                if not is_direct_video:
-                    item.source_url = f"https://www.youtube.com/watch?v={vid}"
-                self.log_event("ok", 0, item.label, existing.name)
-                return True
-
-        archive_file = BASE_DIR / "id.txt" if self.should_use_archive(context) else None
-
-        if is_direct_video:
-            res = download_youtube_video(item.source_url, item.output_dir, archive_file)
-            if res.stdout: print(res.stdout, end="")
-            if vid: item.audio_path = find_youtube_audio(item.output_dir, vid)
-        else:
-            latest = resolve_youtube_latest(item.source_url)
-            if not latest: return False
-            
-            # Explicitly set title and specific video URL
-            item.title = latest.get("title", item.title)
-            specific_url = latest.get("webpage_url")
-            if specific_url:
-                print(f"  [YouTube] Resolved specific URL: {specific_url}")
-                item.source_url = specific_url
-            
-            vid = latest.get("id", "")
-            # Double check existing again after resolution
-            existing = find_youtube_audio(item.output_dir, vid)
-            if existing:
-                item.audio_path = existing
-                item.download_ready = True
-                self.log_event("ok", 0, item.label, existing.name)
-                return True
-            
-            res = download_youtube_video(item.source_url, item.output_dir, archive_file)
-            if res.stdout: print(res.stdout, end="")
-            item.audio_path = find_youtube_audio(item.output_dir, vid)
-        
-        if item.audio_path:
+        if res.success:
+            item.audio_path = res.audio_path
             item.download_ready = True
-            self.log_event("ok", time.monotonic()-t_start, item.label, item.audio_path.name)
+            if res.specific_url:
+                item.source_url = res.specific_url
+            if res.title:
+                item.title = res.title
+            
+            detail = res.audio_path.name if res.audio_path else "ok"
+            self.log_event("ok", time.monotonic()-t_start, item.label, detail)
             return True
+            
         return False
 
 class PodcastDownloader(BaseDownloader):
@@ -190,41 +152,23 @@ class PodcastDownloader(BaseDownloader):
     
     def download(self, item: DailyItem, context: PipelineContext) -> bool:
         t_start = time.monotonic()
-        downloader_bin = BASE_DIR / "pipeline" / "download_latest_podcast.py"
         
-        # Determine if we use specific date or latest
-        run_date = context.args.run_date
-        # Special case: in ad-hoc mode with a specific episode URL, we don't want a date filter
-        if "/episodes/" in item.source_url:
-            run_date = None
-
-        res = download_single_podcast(item.source_url, item.output_dir, run_date, downloader_bin, item.title)
+        # Delegate resolution and download to platform module
+        res = sync_podcast_latest(item.source_url, item.output_dir, context.args.run_date, debug_mode=context.args.debug)
         
-        # Fallback for debug mode
-        if res.returncode == NO_EPISODE_EXIT_CODE and context.args.debug:
-            print(f"Debug mode fallback: Fetching latest episode for {item.label} regardless of date")
-            res = download_single_podcast(item.source_url, item.output_dir, None, downloader_bin, item.title)
-        
-        if res.stdout: print(res.stdout, end="")
-        
-        if res.returncode == NO_EPISODE_EXIT_CODE:
+        if res.skipped:
             self.log_event("skipped", time.monotonic()-t_start, item.label, "no episode")
-            return True # Not a failure
-        elif res.returncode == 0:
-            item.audio_path = parse_audio_path(res.stdout)
+            return True
             
-            # Update source_url to specific episode URL if found in output
-            for line in res.stdout.splitlines():
-                if line.startswith("Episode URL: "):
-                    item.source_url = line.split(": ", 1)[1].strip()
-                    break
-                elif line.startswith("Audio URL: ") and "rss.soundon.fm" not in line:
-                    # Fallback to audio URL only if it's not a generic RSS redirect
-                    item.source_url = line.split(": ", 1)[1].strip()
-
-            item.download_ready = item.audio_path is not None
-            if item.audio_path:
-                self.log_event("ok", time.monotonic()-t_start, item.label, item.audio_path.name)
+        if res.success:
+            item.audio_path = res.audio_path
+            item.download_ready = True
+            if res.specific_url:
+                item.source_url = res.specific_url
+            if res.title:
+                item.title = res.title
+                
+            self.log_event("ok", time.monotonic()-t_start, item.label, res.audio_path.name)
             return True
         
         return False
