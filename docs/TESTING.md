@@ -54,4 +54,31 @@ launchctl print gui/$(id -u)/com.whispersummarize.listener | sed -n '1,80p'
 - 是否有手動驗證 Telegram listener。
 - 若沒跑到某一步，原因是什麼。
 
-若改動觸及下載、轉錄、摘要、通知中的任一流程，就不應只做靜態閱讀，必須至少補一個對應的單元測試。
+## 常見偵錯與手動重跑指令 (Debug Records)
+
+### 強制重新寄送今日摘要 (分開寄送、含網址)
+若已產生摘要但想測試新格式/新收件人，先刪除已發送標記：
+```bash
+# 刪除所有已寄送標記
+find output -name "*.mail-sent" -delete
+
+# 模擬今日流程 (不重新轉錄，只做摘要與寄信)
+source config/local_config.sh
+python3 pipeline/run_daily_pipeline.py --debug --enable-transcribe 0 --concurrency 1 --enable-summarize 1 --traditionalize-transcript --date $(date +%Y-%m-%d)
+```
+
+### 檢查今日各頻道處理狀態
+```bash
+python3 tools/check_daily_status.py
+```
+
+### 驗證 Telegram 鎖定偵測 (Idle/Busy)
+```bash
+# 查看目前的鎖定描述
+python3 -c "import sys; from pathlib import Path; sys.path.insert(0, 'tools'); from telegram_listener import TranscriptionStatusProvider; print(TranscriptionStatusProvider().describe())"
+
+# 人為製造鎖定進行測試
+touch /tmp/whisper_transcription.lock
+# (檢查完後記得刪除)
+rm /tmp/whisper_transcription.lock
+```
