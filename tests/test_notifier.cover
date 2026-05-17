@@ -1,0 +1,107 @@
+    1: from __future__ import annotations
+       
+    1: import io
+    1: import json
+    1: import unittest
+    1: import hashlib
+    1: from pathlib import Path
+    1: from unittest.mock import patch, MagicMock
+       
+    1: from tools.notifier import TelegramBotClient, chunk_telegram_message, MailNotifier
+       
+       
+    2: class FakeResponse:
+    1:     def __init__(self, status: int = 200):
+    2:         self.status = status
+       
+    1:     def __enter__(self):
+    2:         return self
+       
+    1:     def __exit__(self, exc_type, exc, tb):
+    2:         return False
+       
+    1:     def read(self) -> bytes:
+               return b"{}"
+       
+       
+    2: class NotifierTests(unittest.TestCase):
+    1:     def test_chunk_telegram_message_splits_text(self) -> None:
+    1:         chunks = chunk_telegram_message("abcdef", max_length=2)
+    1:         self.assertEqual(chunks, ["ab", "cd", "ef"])
+       
+    1:     def test_chunk_telegram_message_rejects_invalid_max_length(self) -> None:
+    2:         with self.assertRaises(ValueError):
+    1:             chunk_telegram_message("abc", max_length=0)
+       
+    1:     def test_telegram_bot_client_sends_all_chunks(self) -> None:
+    1:         captured_payloads: list[dict] = []
+       
+    1:         def fake_urlopen(request, timeout=30):  # noqa: ANN001
+    2:             captured_payloads.append(json.loads(request.data.decode("utf-8")))
+    2:             return FakeResponse()
+       
+    1:         client = TelegramBotClient("token", "chat-id")
+    2:         with patch("tools.notifier.urllib.request.urlopen", side_effect=fake_urlopen), patch("tools.notifier.time.sleep"):
+    1:             ok = client.send("abcdef", max_length=3)
+       
+    1:         self.assertTrue(ok)
+    3:         self.assertEqual([payload["text"] for payload in captured_payloads], ["abc", "def"])
+       
+    1:     def test_mail_notifier_sends_separate_emails_with_url(self) -> None:
+    2:         class FakeItem:
+    1:             def __init__(self, label, url, emails):
+    2:                 self.label = label
+    2:                 self.title = label
+    2:                 self.source_url = url
+    2:                 self.emails = emails
+    2:                 self.mail_body = f"Body for {label}"
+    2:                 self.mail_attachment_path = Path(f"/tmp/{label}.txt")
+    2:                 self.failed = False
+       
+    1:         items = [
+    1:             FakeItem("Item1", "http://url1", ["a@b.com"]),
+    1:             FakeItem("Item2", "http://url2", ["a@b.com"]),
+               ]
+       
+    2:         class Args:
+    1:             run_date = MagicMock()
+    1:             run_date.isoformat.return_value = "2026-05-16"
+    1:             enable_mail = True
+       
+    1:         notifier = MailNotifier()
+               
+    2:         with patch("tools.notifier.send_mail") as mock_send, \
+    2:              patch("tools.notifier.marker_path_for") as mock_marker:
+                   
+                   # Setup mock marker
+    1:             mock_marker_obj = MagicMock()
+    1:             mock_marker_obj.exists.return_value = False
+    1:             mock_marker.return_value = mock_marker_obj
+                   
+    1:             notifier.notify(items, Args())
+                   
+                   # Should have called send_mail twice
+    1:             self.assertEqual(mock_send.call_count, 2)
+                   
+                   # Check first call
+    1:             args1 = mock_send.call_args_list[0]
+    1:             self.assertEqual(args1.args[0], "a@b.com")
+    1:             self.assertIn("Item1", args1.args[1])
+    1:             self.assertIn("Source URL: http://url1", args1.args[3])
+                   
+                   # Check second call
+    1:             args2 = mock_send.call_args_list[1]
+    1:             self.assertEqual(args2.args[0], "a@b.com")
+    1:             self.assertIn("Item2", args2.args[1])
+    1:             self.assertIn("Source URL: http://url2", args2.args[3])
+                   
+                   # Should have touched marker twice
+    1:             self.assertEqual(mock_marker_obj.touch.call_count, 2)
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()

@@ -1,0 +1,70 @@
+       #!/usr/bin/env python3
+       
+    2: import os
+    2: import json
+    2: import re
+    2: from pathlib import Path
+       
+    2: EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+       
+    2: def load_recipient_groups(path: Path) -> dict[str, list[str]]:
+    1:     if not path.exists():
+               return {}
+       
+    1:     data = json.loads(path.read_text(encoding="utf-8"))
+    1:     groups = data.get("groups", {})
+    1:     if not isinstance(groups, dict):
+               raise SystemExit(f"Invalid groups object in {path}")
+       
+    1:     normalized: dict[str, list[str]] = {}
+    3:     for name, emails in groups.items():
+    2:         if not isinstance(name, str) or not isinstance(emails, list):
+                   continue
+    4:         cleaned = sorted(
+    4:             {
+    6:                 email.strip().lower()
+    7:                 for email in emails
+    6:                 if isinstance(email, str) and EMAIL_PATTERN.fullmatch(email.strip().lower())
+                   }
+               )
+    2:         if cleaned:
+    1:             normalized[name] = cleaned
+    1:     return normalized
+       
+    2: def resolve_emails(subscription: dict, groups: dict[str, list[str]]) -> list[str]:
+    2:     direct_emails = sorted(
+    2:         {
+    6:             email.strip().lower()
+    5:             for email in subscription.get("emails", [])
+    6:             if isinstance(email, str) and EMAIL_PATTERN.fullmatch(email.strip().lower())
+               }
+           )
+       
+    1:     group_names: list[str] = []
+    1:     group_name = subscription.get("recipient_group")
+    1:     if isinstance(group_name, str) and group_name.strip():
+    1:         group_names.append(group_name.strip())
+       
+    1:     extra_group_names = subscription.get("recipient_groups", [])
+    1:     if isinstance(extra_group_names, list):
+    3:         group_names.extend(
+    2:             name.strip()
+    3:             for name in extra_group_names
+    2:             if isinstance(name, str) and name.strip()
+               )
+       
+    1:     group_emails: set[str] = set()
+    3:     for name in group_names:
+    2:         group_emails.update(groups.get(name, []))
+       
+    1:     resolved = set(direct_emails) | group_emails
+           
+           # Global recipients from environment variable (comma-separated)
+    1:     global_recipients = os.environ.get("GLOBAL_RECIPIENTS", "")
+    1:     if global_recipients:
+    3:         for email in global_recipients.split(","):
+    2:             email = email.strip().lower()
+    2:             if EMAIL_PATTERN.fullmatch(email):
+    1:                 resolved.add(email)
+       
+    1:     return sorted(resolved)

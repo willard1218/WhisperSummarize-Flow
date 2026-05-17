@@ -1,0 +1,272 @@
+    1: from __future__ import annotations
+       
+    1: import tempfile
+    1: import unittest
+    1: from pathlib import Path
+       
+    1: from tools.telegram_listener import (
+           ListenerSettings,
+           MediaMessage,
+           MessageInterpreter,
+           PipelineLauncher,
+           TelegramPoller,
+           TelegramUpdateHandler,
+           TranscriptionStatusProvider,
+           UrlTaskStore,
+       )
+       
+       
+    2: class FakeApiClient:
+    1:     def __init__(self):
+   10:         self.sent_messages: list[tuple[str | int, str, dict | None]] = []
+   10:         self.answered: list[tuple[str, str | None]] = []
+   10:         self.edited: list[tuple[str | int, int, dict | None]] = []
+   10:         self.updates: dict | None = None
+       
+    1:     def send_message(self, chat_id, text, reply_markup=None):  # noqa: ANN001
+    8:         self.sent_messages.append((chat_id, text, reply_markup))
+    8:         return {"ok": True}
+       
+    1:     def answer_callback_query(self, callback_query_id, text=None):  # noqa: ANN001
+    1:         self.answered.append((callback_query_id, text))
+    1:         return {"ok": True}
+       
+    1:     def edit_message_reply_markup(self, chat_id, message_id, reply_markup=None):  # noqa: ANN001
+    1:         self.edited.append((chat_id, message_id, reply_markup))
+    1:         return {"ok": True}
+       
+    1:     def get_updates(self, offset, timeout=30):  # noqa: ANN001
+    1:         return self.updates
+       
+       
+    2: class FakeLauncher:
+    1:     def __init__(self):
+    9:         self.calls: list[dict] = []
+       
+    1:     def run(self, **kwargs):  # noqa: ANN003
+    4:         self.calls.append(kwargs)
+       
+       
+    2: class FakeDownloader:
+    1:     def __init__(self, should_succeed: bool = True):
+    9:         self.should_succeed = should_succeed
+    9:         self.calls: list[tuple[str, Path]] = []
+       
+    1:     def download(self, file_id: str, destination: Path) -> bool:
+    3:         self.calls.append((file_id, destination))
+    3:         destination.parent.mkdir(parents=True, exist_ok=True)
+    3:         if self.should_succeed:
+    3:             destination.write_text("audio", encoding="utf-8")
+    3:         return self.should_succeed
+       
+       
+    2: class FakeStatusProvider:
+    1:     def __init__(self, description: str):
+    9:         self.description = description
+       
+    1:     def describe(self) -> str:
+    4:         return self.description
+       
+       
+    2: class TelegramListenerTests(unittest.TestCase):
+    1:     def make_handler(self, temp_dir: str, status: str = "空閒中"):
+   18:         settings = ListenerSettings(
+    9:             base_dir=Path(temp_dir),
+    9:             bot_token="token",
+    9:             owner_chat_id="owner",
+    9:             python_executable="python3",
+               )
+    9:         api_client = FakeApiClient()
+    9:         launcher = FakeLauncher()
+    9:         downloader = FakeDownloader()
+    9:         url_task_store = UrlTaskStore(Path(temp_dir) / "tasks.json")
+   18:         handler = TelegramUpdateHandler(
+    9:             settings=settings,
+    9:             api_client=api_client,
+    9:             status_provider=FakeStatusProvider(status),
+    9:             pipeline_launcher=launcher,
+    9:             file_downloader=downloader,
+    9:             url_task_store=url_task_store,
+               )
+    9:         return handler, api_client, launcher, downloader, url_task_store
+       
+    1:     def test_status_command_reports_current_state(self) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             handler, api_client, _, _, _ = self.make_handler(temp_dir, status="忙碌中")
+    1:             handler.handle({"message": {"chat": {"id": "owner"}, "text": "/status"}})
+       
+    1:             self.assertEqual(api_client.sent_messages[0][1], "目前系統狀態：\n忙碌中")
+       
+    1:     def test_url_message_sends_confirmation_button(self) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             handler, api_client, _, _, url_task_store = self.make_handler(temp_dir, status="忙碌中")
+    1:             url = "https://youtube.com/watch?v=abc"
+    2:             handler.handle(
+    1:                 {"message": {"chat": {"id": "owner"}, "text": url}}
+                   )
+       
+    1:             chat_id, text, reply_markup = api_client.sent_messages[0]
+    1:             self.assertEqual(chat_id, "owner")
+    1:             self.assertIn("是否啟動流程？", text)
+                   
+                   # Check callback_data uses short ID
+    1:             url_id = url_task_store.get_id_for_url(url)
+    1:             self.assertEqual(reply_markup["inline_keyboard"][0][0]["callback_data"], f"exec|{url_id}")
+       
+    1:     def test_apple_podcast_url_detection(self) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             handler, api_client, _, _, _ = self.make_handler(temp_dir)
+    1:             url = "https://podcasts.apple.com/tw/podcast/id123"
+    2:             handler.handle(
+    1:                 {"message": {"chat": {"id": "owner"}, "text": url}}
+                   )
+       
+    1:             self.assertIn("偵測到網址", api_client.sent_messages[0][1])
+    1:             self.assertIn(url, api_client.sent_messages[0][1])
+       
+    1:     def test_media_message_downloads_and_launches_pipeline(self) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             handler, api_client, launcher, downloader, _ = self.make_handler(temp_dir)
+    2:             handler.handle(
+    1:                 {
+    2:                     "message": {
+    1:                         "chat": {"id": "owner"},
+    1:                         "audio": {"file_id": "file-1", "file_name": "clip.mp3", "duration": 12},
+                           }
+                       }
+                   )
+       
+    1:             self.assertEqual(downloader.calls[0][0], "file-1")
+    1:             self.assertEqual(launcher.calls[0]["chat_id"], "owner")
+    1:             self.assertIn("/output/telegram/audio/", str(launcher.calls[0]["local_file"]))
+    1:             self.assertTrue(str(launcher.calls[0]["local_file"]).endswith("clip.mp3"))
+    1:             self.assertIn("收到媒體檔案", api_client.sent_messages[0][1])
+    1:             metadata_path = Path(temp_dir) / "output" / "telegram"
+    2:             self.assertTrue(any(path.name == "metadata.json" for path in metadata_path.rglob("metadata.json")))
+       
+    1:     def test_unauthorized_chat_is_ignored(self) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             handler, api_client, launcher, _, _ = self.make_handler(temp_dir)
+    1:             handler.handle({"message": {"chat": {"id": "stranger"}, "text": "/status"}})
+       
+    1:             self.assertEqual(api_client.sent_messages, [])
+    1:             self.assertEqual(launcher.calls, [])
+       
+    1:     def test_callback_exec_starts_pipeline(self) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             handler, api_client, launcher, _, url_task_store = self.make_handler(temp_dir)
+    1:             url = "https://youtube.com/watch?v=abc"
+    1:             url_id = url_task_store.get_id_for_url(url)
+                   
+    2:             handler.handle(
+    1:                 {
+    2:                     "callback_query": {
+    1:                         "id": "cb-1",
+    1:                         "data": f"exec|{url_id}",
+    1:                         "message": {"chat": {"id": "owner"}, "message_id": 10},
+                           }
+                       }
+                   )
+       
+    1:             self.assertEqual(api_client.answered[0], ("cb-1", "任務已啟動"))
+    1:             self.assertEqual(launcher.calls[0]["url"], url)
+       
+    1:     def test_video_message_downloads_and_launches_pipeline(self) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             handler, api_client, launcher, downloader, _ = self.make_handler(temp_dir)
+    2:             handler.handle(
+    1:                 {
+    2:                     "message": {
+    1:                         "chat": {"id": "owner"},
+    1:                         "video": {"file_id": "vid-1", "file_name": "movie.mp4", "duration": 30},
+                           }
+                       }
+                   )
+       
+    1:             self.assertEqual(downloader.calls[0][0], "vid-1")
+    1:             self.assertIn("/output/telegram/video/", str(launcher.calls[0]["local_file"]))
+    1:             self.assertTrue(str(launcher.calls[0]["local_file"]).endswith("movie.mp4"))
+    1:             self.assertIn("收到媒體檔案", api_client.sent_messages[0][1])
+       
+    1:     def test_video_note_downloads_and_launches_pipeline(self) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             handler, api_client, launcher, downloader, _ = self.make_handler(temp_dir)
+    2:             handler.handle(
+    1:                 {
+    2:                     "message": {
+    1:                         "chat": {"id": "owner"},
+    1:                         "video_note": {"file_id": "vn-1", "duration": 5},
+                           }
+                       }
+                   )
+       
+    1:             self.assertEqual(downloader.calls[0][0], "vn-1")
+    1:             self.assertIn("/output/telegram/video/", str(launcher.calls[0]["local_file"]))
+    1:             self.assertIn("video_note_", str(launcher.calls[0]["local_file"]))
+       
+    1:     def test_caption_url_detection(self) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             handler, api_client, _, _, _ = self.make_handler(temp_dir)
+    2:             handler.handle(
+    1:                 {
+    2:                     "message": {
+    1:                         "chat": {"id": "owner"},
+    1:                         "caption": "Check this: https://youtube.com/watch?v=xyz",
+                           }
+                       }
+                   )
+       
+    1:             self.assertIn("偵測到網址", api_client.sent_messages[0][1])
+    1:             self.assertIn("https://youtube.com/watch?v=xyz", api_client.sent_messages[0][1])
+       
+    1:     def test_transcription_status_provider_real_locks(self) -> None:
+    1:         import fcntl
+    1:         import os
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             lock_file = Path(temp_dir) / "test.lock"
+    1:             dir_lock = Path(temp_dir) / "dir.lock"
+                   
+    1:             provider = TranscriptionStatusProvider(lock_paths=[lock_file, dir_lock])
+                   
+                   # 1. Idle
+    1:             self.assertEqual(provider.describe(), "空閒中")
+                   
+                   # 2. Flock busy
+    2:             with open(lock_file, "w") as f:
+    1:                 fcntl.flock(f, fcntl.LOCK_EX)
+    1:                 self.assertEqual(provider.describe(), "忙碌中")
+                   
+                   # 3. Flock stale (file exists but no lock)
+    1:             lock_file.touch()
+    1:             self.assertEqual(provider.describe(), "空閒中")
+                   
+                   # 4. Dir lock busy (process alive)
+    1:             dir_lock.mkdir()
+    1:             (dir_lock / "pid").write_text(str(os.getpid()))
+    1:             self.assertEqual(provider.describe(), "忙碌中")
+                   
+                   # 5. Dir lock stale (process dead)
+    1:             (dir_lock / "pid").write_text("999999") # Hopefully dead
+    1:             self.assertEqual(provider.describe(), "空閒中")
+       
+    1:     def test_poller_advances_offset_even_when_handler_raises(self) -> None:
+    1:         api_client = FakeApiClient()
+    1:         api_client.updates = {"ok": True, "result": [{"update_id": 3, "message": {}}, {"update_id": 4, "message": {}}]}
+       
+    2:         class FlakyHandler:
+    1:             def __init__(self):
+    1:                 self.calls = 0
+       
+    1:             def handle(self, update):  # noqa: ANN001
+    2:                 self.calls += 1
+    2:                 if self.calls == 1:
+    1:                     raise RuntimeError("boom")
+       
+    1:         poller = TelegramPoller(api_client, FlakyHandler(), sleep_seconds=0)
+    1:         poller.poll_once()
+       
+    1:         self.assertEqual(poller.last_update_id, 4)
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()

@@ -1,0 +1,146 @@
+    2: import subprocess
+    2: import os
+    2: import json
+    2: from pathlib import Path
+    2: from abc import ABC, abstractmethod
+       
+    4: class BaseTranscriber(ABC):
+    4:     @abstractmethod
+    4:     def transcribe(self, audio_path: Path, output_dir: Path) -> Path | None:
+               """Transcribes the audio file and returns the path to the resulting transcript."""
+               pass
+       
+    4:     @staticmethod
+    4:     def get_audio_duration(audio_path: Path) -> str:
+               """Returns the duration of the audio file in HH:MM:SS format using ffprobe."""
+               ffprobe_bin = os.environ.get("FFPROBE_BIN", "ffprobe")
+               try:
+                   cmd = [
+                       ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
+                       "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)
+                   ]
+                   output = subprocess.check_output(cmd, text=True).strip()
+                   total_seconds = float(output)
+                   
+                   hours = int(total_seconds // 3600)
+                   minutes = int((total_seconds % 3600) // 60)
+                   seconds = int(total_seconds % 60)
+                   return f"{hours:02}:{minutes:02}:{seconds:02}"
+               except Exception as e:
+                   print(f"Error getting audio duration: {e}")
+                   return "00:00:00"
+       
+    4: class WhisperCPPTranscriber(BaseTranscriber):
+    2:     def __init__(self, script_path: str):
+    1:         self.script_path = script_path
+       
+    2:     def transcribe(self, audio_path: Path, output_dir: Path) -> Path | None:
+               # Currently gensrt.sh handles the lock, but run_daily_pipeline also has a lock.
+               # To maintain compatibility, we just call the script.
+    1:         res = subprocess.run([self.script_path, str(audio_path)])
+    1:         if res.returncode == 0:
+                   # gensrt.sh produces .srt.txt
+    1:             transcript = audio_path.with_suffix(".srt.txt")
+    1:             if transcript.exists():
+    1:                 return transcript
+               return None
+       
+    4: class WhisperKitTranscriber(BaseTranscriber):
+    2:     def __init__(self, bin_path: str, model_path: str = None):
+    1:         self.bin_path = bin_path
+    1:         self.model_path = model_path
+    1:         self.ffmpeg_bin = os.environ.get("FFMPEG_BIN", "ffmpeg")
+       
+    2:     def transcribe(self, audio_path: Path, output_dir: Path) -> Path | None:
+               # 1. Convert to WAV (16kHz mono)
+    1:         wav_path = audio_path.with_suffix(".wav")
+    1:         should_convert = not wav_path.exists()
+    1:         if not should_convert:
+                   # Check if source is newer
+    1:             if audio_path.stat().st_mtime > wav_path.stat().st_mtime:
+                       should_convert = True
+               
+    1:         if should_convert:
+                   print(f"[FFmpeg] Converting to 16kHz WAV: {audio_path.name}")
+                   subprocess.run([
+                       self.ffmpeg_bin, "-y", "-i", str(audio_path),
+                       "-ac", "1", "-ar", "16000", str(wav_path)
+                   ], check=True, capture_output=True)
+       
+               # 2. Run WhisperKit
+    1:         cmd = [
+    1:             self.bin_path, "transcribe",
+    1:             "--audio-path", str(wav_path),
+    1:             "--diarization",
+    1:             "--language", "zh"
+               ]
+    1:         if self.model_path:
+                   cmd += ["--model-path", self.model_path]
+               
+               # WhisperKit often outputs to the current directory or a report directory.
+               # We'll use --report-path to keep it organized.
+    1:         report_dir = output_dir / "reports"
+    1:         report_dir.mkdir(exist_ok=True)
+    1:         cmd += ["--report-path", str(report_dir), "--report"]
+       
+    1:         print(f"Running WhisperKit: {' '.join(cmd)}")
+    1:         res = subprocess.run(cmd)
+               
+               # WhisperKit produces a JSON report. We need to find it and convert it to .srt.txt and .txt
+               # for the rest of the pipeline to work.
+               # The report is usually named after the audio file.
+               # Example: reports/<audio_name>/transcription.json or reports/<audio_name>.json
+    1:         audio_stem = wav_path.stem
+    1:         report_json = report_dir / audio_stem / "transcription.json"
+               
+    1:         if not report_json.exists():
+                   report_json = report_dir / f"{audio_stem}.json"
+               
+    1:         if res.returncode == 0 and report_json.exists():
+    1:             return self._process_report(report_json, audio_path)
+               
+               return None
+       
+    2:     def _process_report(self, report_json: Path, original_audio: Path) -> Path | None:
+    1:         try:
+    1:             data = json.loads(report_json.read_text(encoding="utf-8"))
+    1:             return WhisperKitReportWriter(original_audio).write(data.get("segments", []))
+               except Exception as e:
+                   print(f"Error processing WhisperKit report: {e}")
+                   return None
+       
+       
+    4: class WhisperKitReportWriter:
+    2:     def __init__(self, original_audio: Path):
+    2:         self.original_audio = original_audio
+       
+    4:     @staticmethod
+    4:     def format_time(seconds_value: float) -> str:
+    6:         hours = int(seconds_value // 3600)
+    6:         minutes = int((seconds_value % 3600) // 60)
+    6:         seconds = int(seconds_value % 60)
+    6:         millis = int((seconds_value - int(seconds_value)) * 1000)
+    6:         return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
+       
+    4:     @staticmethod
+    4:     def render_line(segment: dict) -> str:
+    3:         text = segment.get("text", "").strip()
+    3:         speaker = segment.get("speaker")
+    3:         return f"[{speaker}] {text}" if speaker else text
+       
+    2:     def write(self, segments: list[dict]) -> Path:
+    2:         srt_path = self.original_audio.with_suffix(".srt.txt")
+    2:         txt_path = self.original_audio.with_suffix(".txt")
+       
+    4:         with open(srt_path, "w", encoding="utf-8") as srt_handle, open(txt_path, "w", encoding="utf-8") as txt_handle:
+    5:             for index, segment in enumerate(segments, 1):
+    3:                 start = segment.get("start", 0)
+    3:                 end = segment.get("end", 0)
+    3:                 line_text = self.render_line(segment)
+       
+    3:                 srt_handle.write(f"{index}\n")
+    3:                 srt_handle.write(f"{self.format_time(start)} --> {self.format_time(end)}\n")
+    3:                 srt_handle.write(f"{line_text}\n\n")
+    3:                 txt_handle.write(f"{line_text}\n")
+       
+    2:         return srt_path

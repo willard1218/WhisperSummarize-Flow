@@ -1,0 +1,44 @@
+       #!/usr/bin/env python3
+       
+    2: from __future__ import annotations
+       
+    2: import os
+    2: from pathlib import Path
+    2: from typing import MutableMapping
+       
+       
+    2: def load_local_config(
+           config_path: Path,
+           environ: MutableMapping[str, str] | None = None,
+       ) -> MutableMapping[str, str]:
+           """Load shell-style `KEY=value` pairs into an environment mapping."""
+    2:     target = environ if environ is not None else os.environ
+       
+    2:     if not config_path.exists():
+    1:         return target
+       
+    1:     content = config_path.read_text(encoding="utf-8")
+    5:     for raw_line in content.splitlines():
+    4:         line = raw_line.strip()
+    4:         if not line or line.startswith("#"):
+    1:             continue
+       
+    3:         if line.startswith("export "):
+    1:             line = line[len("export "):].strip()
+       
+    3:         kv_part = line.split("#", 1)[0].strip()
+    3:         if "=" not in kv_part:
+                   continue
+       
+    3:         key, value = kv_part.split("=", 1)
+    3:         key = key.strip()
+    3:         value = value.strip().strip('"').strip("'")
+    3:         if not key:
+                   continue
+       
+    3:         if key == "PATH":
+    1:             target["PATH"] = value.replace("$PATH", target.get("PATH", ""))
+               else:
+    2:             target[key] = value
+       
+    1:     return target

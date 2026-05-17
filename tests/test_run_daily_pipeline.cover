@@ -1,0 +1,168 @@
+    1: from __future__ import annotations
+       
+    1: import tempfile
+    1: import unittest
+    1: from pathlib import Path
+    1: from types import SimpleNamespace
+    1: from unittest.mock import patch
+       
+    1: from pipeline.run_daily_pipeline import DailyItem, YouTubeDownloader, build_items, TranscriptionLock
+    1: from pipeline.run_registered_youtube import YouTubeSyncResult
+       
+       
+    2: class RunDailyPipelineTests(unittest.TestCase):
+    2:     @patch("pipeline.run_daily_pipeline.resolve_emails", return_value=["user@example.com"])
+    2:     @patch("pipeline.run_daily_pipeline.load_recipient_groups", return_value={})
+    2:     def test_build_items_creates_youtube_adhoc_task(self, _load_groups, _resolve_emails) -> None:
+    2:         args = SimpleNamespace(
+    1:             recipient_config="config/recipient_groups.local.json",
+    1:             recipient_group="all",
+    1:             url="https://youtube.com/watch?v=abc123",
+    1:             local_file=None,
+    1:             podcast_config="config/subscriptions.json",
+    1:             youtube_config="config/youtube_subscriptions.json",
+    1:             task_origin="default",
+               )
+       
+    1:         items = build_items(args, Path("/tmp/output-root"))
+       
+    1:         self.assertEqual(len(items), 1)
+    1:         self.assertEqual(items[0].kind, "youtube")
+    1:         self.assertEqual(items[0].output_dir, Path("/tmp/output-root/adhoc_yt_abc123"))
+       
+    2:     @patch("pipeline.run_daily_pipeline.resolve_emails", return_value=["user@example.com"])
+    2:     @patch("pipeline.run_daily_pipeline.load_recipient_groups", return_value={})
+    2:     def test_build_items_creates_local_file_task(self, _load_groups, _resolve_emails) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             local_file = Path(temp_dir) / "voice.m4a"
+    1:             local_file.write_text("", encoding="utf-8")
+    2:             args = SimpleNamespace(
+    1:                 recipient_config="config/recipient_groups.local.json",
+    1:                 recipient_group="all",
+    1:                 url=None,
+    1:                 local_file=str(local_file),
+    1:                 podcast_config="config/subscriptions.json",
+    1:                 youtube_config="config/youtube_subscriptions.json",
+    1:                 task_origin="default",
+                   )
+       
+    1:             items = build_items(args, Path("/tmp/output-root"))
+       
+    1:             self.assertEqual(items[0].kind, "voice")
+    1:             self.assertEqual(items[0].audio_path, local_file.resolve())
+    1:             self.assertTrue(items[0].download_ready)
+       
+    2:     @patch("pipeline.run_daily_pipeline.resolve_emails", return_value=["user@example.com"])
+    2:     @patch("pipeline.run_daily_pipeline.load_recipient_groups", return_value={})
+    2:     def test_build_items_routes_telegram_youtube_to_telegram_tree(self, _load_groups, _resolve_emails) -> None:
+    2:         args = SimpleNamespace(
+    1:             recipient_config="config/recipient_groups.local.json",
+    1:             recipient_group="all",
+    1:             url="https://youtube.com/watch?v=abc123",
+    1:             local_file=None,
+    1:             podcast_config="config/subscriptions.json",
+    1:             youtube_config="config/youtube_subscriptions.json",
+    1:             task_origin="telegram",
+               )
+       
+    1:         items = build_items(args, Path("/tmp/output-root"))
+       
+    1:         self.assertEqual(items[0].output_dir, Path("/tmp/output-root/telegram/youtube/abc123"))
+       
+    2:     @patch("pipeline.run_daily_pipeline.sync_youtube_latest")
+    2:     def test_youtube_downloader_reuses_existing_audio(self, mock_sync) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             output_dir = Path(temp_dir)
+    1:             existing_audio = output_dir / "title__abc123.mp3"
+                   
+    2:             mock_sync.return_value = YouTubeSyncResult(
+    1:                 audio_path=existing_audio,
+    1:                 success=True,
+    1:                 already_exists=True
+                   )
+                   
+    2:             item = DailyItem(
+    1:                 label="Ad-hoc Task",
+    1:                 kind="youtube",
+    1:                 source_url="https://youtube.com/watch?v=abc123",
+    1:                 emails=[],
+    1:                 output_dir=output_dir,
+                   )
+       
+    1:             ok = YouTubeDownloader().download(item, SimpleNamespace(args=SimpleNamespace(url=None)))
+       
+    1:             self.assertTrue(ok)
+    1:             self.assertEqual(item.audio_path, existing_audio)
+    1:             self.assertTrue(item.download_ready)
+    1:             mock_sync.assert_called_once()
+       
+    2:     @patch("pipeline.run_daily_pipeline.sync_youtube_latest")
+    2:     def test_youtube_adhoc_download_does_not_use_global_archive(self, mock_sync) -> None:
+    2:         item = DailyItem(
+    1:             label="Ad-hoc Task",
+    1:             kind="youtube",
+    1:             source_url="https://youtube.com/watch?v=abc123",
+    1:             emails=[],
+    1:             output_dir=Path("/tmp/output-root/telegram/youtube/abc123"),
+               )
+    1:         mock_sync.return_value = YouTubeSyncResult(success=True)
+       
+    2:         YouTubeDownloader().download(
+    1:             item,
+    1:             SimpleNamespace(args=SimpleNamespace(url=item.source_url)),
+               )
+       
+               # verify use_archive=False was passed to sync_youtube_latest
+    1:         self.assertFalse(mock_sync.call_args.kwargs["use_archive"])
+       
+    1:     def test_transcription_lock_behaves_correctly(self) -> None:
+    1:         import fcntl
+    1:         import threading
+    1:         import time
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             lock_path = Path(temp_dir) / "test.lock"
+    1:             lock = TranscriptionLock(lock_file=str(lock_path))
+                   
+                   # 1. Test basic re-entrance or concurrent thread acquisition
+    1:             def acquire_and_hold(hold_seconds: float):
+    4:                 with lock:
+    2:                     time.sleep(hold_seconds)
+                   
+    1:             t_start = time.time()
+    1:             t1 = threading.Thread(target=acquire_and_hold, args=(0.2,))
+    1:             t2 = threading.Thread(target=acquire_and_hold, args=(0.1,))
+                   
+    1:             t1.start()
+    1:             time.sleep(0.05) # Ensure t1 gets it
+    1:             t2.start()
+                   
+    1:             t1.join()
+    1:             t2.join()
+    1:             duration = time.time() - t_start
+                   
+                   # Should take at least 0.3s if sequential
+    1:             self.assertGreaterEqual(duration, 0.3)
+       
+                   # 2. Test cross-process (using flock directly to simulate another process)
+    2:             with open(lock_path, "w") as f:
+    1:                 fcntl.flock(f, fcntl.LOCK_EX)
+                       
+                       # Try to acquire in another thread (should block)
+    1:                 success = []
+    1:                 def try_acquire():
+    2:                     with lock:
+    1:                         success.append(True)
+                       
+    1:                 t3 = threading.Thread(target=try_acquire)
+    1:                 t3.start()
+    1:                 t3.join(timeout=0.1)
+                       
+    1:                 self.assertTrue(t3.is_alive()) # Still blocked
+                       
+    1:                 fcntl.flock(f, fcntl.LOCK_UN)
+    1:                 t3.join(timeout=0.5)
+    1:                 self.assertTrue(len(success) > 0)
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()

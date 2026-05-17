@@ -1,0 +1,54 @@
+    1: from __future__ import annotations
+       
+    1: import tempfile
+    1: import unittest
+    1: from pathlib import Path
+       
+    1: from tools.output_paths import (
+           podcast_directory_name,
+           subscribed_podcast_output_dir,
+           subscribed_youtube_output_dir,
+           telegram_media_output_dir,
+           telegram_url_output_dir,
+           youtube_channel_directory_name,
+           youtube_video_id,
+       )
+       
+       
+    2: class OutputPathTests(unittest.TestCase):
+    1:     def test_podcast_subscription_uses_podcast_title(self) -> None:
+    1:         root = Path("/tmp/output")
+    1:         result = subscribed_podcast_output_dir(root, "My Podcast")
+    1:         self.assertEqual(result, Path("/tmp/output/podcast/My Podcast"))
+       
+    1:     def test_youtube_subscription_uses_handle_name(self) -> None:
+    1:         root = Path("/tmp/output")
+    1:         result = subscribed_youtube_output_dir(root, "https://www.youtube.com/@Alansays/streams")
+    1:         self.assertEqual(result, Path("/tmp/output/youtube/Alansays"))
+       
+    1:     def test_telegram_youtube_url_uses_video_id(self) -> None:
+    1:         root = Path("/tmp/output")
+    1:         result = telegram_url_output_dir(root, "https://youtube.com/watch?v=SBH44qRxxKU")
+    1:         self.assertEqual(result, Path("/tmp/output/telegram/youtube/SBH44qRxxKU"))
+       
+    1:     def test_telegram_apple_podcast_url(self) -> None:
+    1:         root = Path("/tmp/output")
+    1:         result = telegram_url_output_dir(root, "https://podcasts.apple.com/tw/podcast/id1552655948")
+    1:         self.assertEqual(result, Path("/tmp/output/telegram/apple_podcast/id1552655948"))
+       
+    1:     def test_telegram_soundon_podcast_url(self) -> None:
+    1:         root = Path("/tmp/output")
+    1:         result = telegram_url_output_dir(root, "https://player.soundon.fm/p/uuid/episodes/episode-id")
+    1:         self.assertEqual(result, Path("/tmp/output/telegram/soundon_podcast/episode-id"))
+       
+    1:     def test_telegram_media_dir_buckets_audio_and_video(self) -> None:
+    1:         root = Path("/tmp/output")
+    1:         audio_dir = telegram_media_output_dir(root, "audio", "meeting note.m4a")
+    1:         video_dir = telegram_media_output_dir(root, "video", "screen.mov")
+       
+    1:         self.assertIn("/telegram/audio/", str(audio_dir))
+    1:         self.assertIn("/telegram/video/", str(video_dir))
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()

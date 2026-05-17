@@ -5,6 +5,8 @@ __pycache__/
 output/
 *.mp3
 *.wav
+*.mp4
+*.webm
 *.srt
 *.srt.txt
 *.mail-sent

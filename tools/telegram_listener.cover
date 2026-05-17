@@ -1,0 +1,605 @@
+       #!/usr/bin/env python3
+       
+    1: from __future__ import annotations
+       
+    1: import fcntl
+    1: import hashlib
+    1: import json
+    1: import logging
+    1: import os
+    1: import re
+    1: import subprocess
+    1: import sys
+    1: import time
+    1: import urllib.request
+    1: from dataclasses import dataclass
+    1: from datetime import datetime
+    1: from pathlib import Path
+       
+       
+    1: BASE_DIR = Path(__file__).resolve().parent.parent
+    1: sys.path.insert(0, str(BASE_DIR))
+    1: sys.path.insert(0, str(BASE_DIR / "tools"))
+       
+    1: from local_config import load_local_config
+    1: from output_paths import telegram_media_output_dir, write_task_metadata
+       
+       
+    1: logger = logging.getLogger("telegram_listener")
+       
+       
+       
+    2: URL_PATTERN = re.compile(
+    1:     r"https?://(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b"
+           r"(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)"
+       )
+    1: SUPPORTED_URL_HOSTS = ("youtube.com", "youtu.be", "soundon.fm", "podcasts.apple.com")
+    1: MEDIA_EXTENSIONS = (".m4a", ".mp3", ".wav", ".ogg", ".flac", ".aac", ".mp4", ".mov", ".mkv")
+       
+       
+    3: @dataclass(frozen=True)
+    2: class ListenerSettings:
+    1:     base_dir: Path
+    1:     bot_token: str
+    1:     owner_chat_id: str | None
+    1:     python_executable: str
+       
+    2:     @property
+    2:     def api_url(self) -> str:
+               return f"https://api.telegram.org/bot{self.bot_token}/"
+       
+       
+    3: @dataclass(frozen=True)
+    2: class MediaMessage:
+    1:     file_id: str
+    1:     kind: str
+    1:     original_name: str
+    1:     extension: str
+    1:     duration: int
+       
+       
+    2: class TelegramApiClient:
+    1:     def __init__(self, settings: ListenerSettings):
+               self.settings = settings
+       
+    1:     def call_api(self, method: str, data: dict | None = None) -> dict | None:
+               url = self.settings.api_url + method
+               payload = json.dumps(data).encode("utf-8") if data else None
+               
+               if method != "getUpdates":
+                   logger.info(f"[API CALL] Method: {method}, Data: {data}")
+       
+               for attempt in range(3):
+                   request = urllib.request.Request(
+                       url,
+                       data=payload,
+                       headers={"Content-Type": "application/json"},
+                   )
+                   try:
+                       with urllib.request.urlopen(request, timeout=60) as response:
+                           res_data = json.loads(response.read().decode())
+                           if not res_data.get("ok"):
+                               logger.error(f"[API ERROR] {method}: {res_data.get('description')}")
+                           return res_data
+                   except Exception as exc:
+                       logger.warning(f"[API ATTEMPT {attempt+1} FAILED] {method}: {exc}")
+                       if attempt < 2:
+                           time.sleep(2)
+                       else:
+                           return None
+               return None
+       
+    1:     def send_message(self, chat_id: str | int, text: str, reply_markup: dict | None = None) -> dict | None:
+               payload = {
+                   "chat_id": chat_id,
+                   "text": text,
+                   "disable_web_page_preview": True,
+               }
+               if reply_markup:
+                   payload["reply_markup"] = reply_markup
+               return self.call_api("sendMessage", payload)
+       
+    1:     def edit_message_reply_markup(self, chat_id: str | int, message_id: int, reply_markup: dict | None = None) -> dict | None:
+               payload = {"chat_id": chat_id, "message_id": message_id}
+               if reply_markup is not None:
+                   payload["reply_markup"] = reply_markup
+               return self.call_api("editMessageReplyMarkup", payload)
+       
+    1:     def answer_callback_query(self, callback_query_id: str, text: str | None = None) -> dict | None:
+               payload = {"callback_query_id": callback_query_id}
+               if text:
+                   payload["text"] = text
+               return self.call_api("answerCallbackQuery", payload)
+       
+    1:     def get_updates(self, offset: int, timeout: int = 30) -> dict | None:
+               return self.call_api("getUpdates", {"offset": offset, "timeout": timeout})
+       
+    1:     def get_file(self, file_id: str) -> dict | None:
+               return self.call_api("getFile", {"file_id": file_id})
+       
+    1:     def delete_webhook(self, drop_pending_updates: bool = False) -> dict | None:
+               return self.call_api("deleteWebhook", {"drop_pending_updates": drop_pending_updates})
+       
+       
+    2: class UrlTaskStore:
+    1:     """Stores full URLs and provides a short ID for Telegram callback_data limits."""
+    1:     def __init__(self, store_path: Path):
+    9:         self.path = store_path
+    9:         self.path.parent.mkdir(parents=True, exist_ok=True)
+       
+    1:     def _load(self) -> dict:
+    6:         if not self.path.exists():
+    4:             return {}
+    2:         try:
+    2:             return json.loads(self.path.read_text(encoding="utf-8"))
+               except Exception:
+                   return {}
+       
+    1:     def _save(self, data: dict):
+    5:         self.path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+       
+    1:     def get_id_for_url(self, url: str) -> str:
+    5:         url_hash = hashlib.md5(url.encode("utf-8")).hexdigest()[:16]
+    5:         data = self._load()
+    5:         data[url_hash] = url
+    5:         self._save(data)
+    5:         return url_hash
+       
+    1:     def get_url_by_id(self, url_id: str) -> str | None:
+    1:         return self._load().get(url_id)
+       
+       
+    2: class TranscriptionStatusProvider:
+    1:     def __init__(self, lock_paths: list[Path] | None = None):
+    1:         self.lock_paths = lock_paths or [
+                   Path("/tmp/whisper_transcription.lock"),
+                   Path(os.environ.get("TMPDIR", "/tmp")) / "gensrt.lock",
+               ]
+       
+    1:     def _is_flock_busy(self, path: Path) -> bool:
+    5:         if not path.exists():
+    1:             return False
+    4:         try:
+    8:             with open(path, "r") as f:
+                       # Try to acquire an exclusive lock, non-blocking
+                       # If this succeeds, it means no one else has the lock
+    4:                 fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                       # We got the lock! So it's NOT busy.
+    3:                 fcntl.flock(f, fcntl.LOCK_UN)
+    3:                 return False
+    1:         except (IOError, BlockingIOError):
+                   # Lock is held by someone else
+    1:             return True
+               except Exception:
+                   # Fallback to simple existence check if anything weird happens
+                   return path.exists()
+       
+    1:     def _is_dir_lock_busy(self, path: Path) -> bool:
+    4:         if not path.exists():
+    2:             return False
+    2:         pid_file = path / "pid"
+    2:         if not pid_file.exists():
+                   # Directory exists but no pid file? Might be transitioning or stale.
+                   return True
+    2:         try:
+    2:             pid = int(pid_file.read_text().strip())
+                   # Check if process is alive
+    2:             os.kill(pid, 0)
+    1:             return True
+    1:         except (ProcessLookupError, ValueError, PermissionError):
+                   # Process is dead or invalid pid
+    1:             return False
+       
+    1:     def is_busy(self) -> bool:
+               # Check whisper_transcription.lock (python flock)
+    5:         if self._is_flock_busy(self.lock_paths[0]):
+    1:             return True
+               
+               # Check gensrt.lock (shell directory lock)
+    4:         if self._is_dir_lock_busy(self.lock_paths[1]):
+    1:             return True
+                   
+    3:         return False
+       
+    1:     def describe(self) -> str:
+    5:         return "忙碌中" if self.is_busy() else "空閒中"
+       
+       
+    2: class PipelineLauncher:
+    1:     def __init__(self, base_dir: Path, python_executable: str):
+               self.base_dir = base_dir
+               self.python_executable = python_executable
+               self.script_path = self.base_dir / "pipeline" / "run_daily_pipeline.py"
+       
+    1:     def build_command(self, chat_id: str | int, url: str | None = None, local_file: Path | None = None) -> list[str]:
+               command = [
+                   self.python_executable,
+                   str(self.script_path),
+                   "--recipient-group", "all",
+                   "--enable-transcribe", "1",
+                   "--enable-summarize", "1",
+                   "--enable-mail", "1",
+                   "--enable-telegram", "1",
+                   "--telegram-progress",
+                   "--telegram-chat-id", str(chat_id),
+                   "--task-origin", "telegram",
+               ]
+               if url:
+                   command += ["--url", url]
+               elif local_file:
+                   command += ["--local-file", str(local_file)]
+               return command
+       
+    1:     def run(self, chat_id: str | int, url: str | None = None, local_file: Path | None = None) -> None:
+               command = self.build_command(chat_id=chat_id, url=url, local_file=local_file)
+               subprocess.Popen(command, cwd=str(self.base_dir))
+       
+       
+    2: class TelegramFileDownloader:
+    1:     def __init__(self, api_client: TelegramApiClient, bot_token: str):
+               self.api_client = api_client
+               self.bot_token = bot_token
+       
+    1:     def download(self, file_id: str, destination: Path) -> bool:
+               response = self.api_client.get_file(file_id)
+               if not response or not response.get("ok"):
+                   return False
+       
+               file_path = response["result"]["file_path"]
+               url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
+               logger.info(f"[DOWNLOADING] {url} to {destination}")
+               urllib.request.urlretrieve(url, destination)
+               return True
+       
+       
+    2: class MessageInterpreter:
+    2:     @staticmethod
+    2:     def combined_text(message: dict) -> str:
+    3:         text = message.get("text", "")
+    3:         caption = message.get("caption", "")
+    3:         return f"{text}\n{caption}".strip()
+       
+    2:     @staticmethod
+    2:     def extract_supported_urls(text: str) -> list[str]:
+    3:         urls = URL_PATTERN.findall(text)
+   15:         return [url for url in urls if any(host in url for host in SUPPORTED_URL_HOSTS)]
+       
+    2:     @staticmethod
+    2:     def extract_media(message: dict) -> MediaMessage | None:
+    6:         timestamp = int(time.time())
+       
+    6:         if "voice" in message:
+                   return MediaMessage(
+                       file_id=message["voice"]["file_id"],
+                       kind="voice",
+                       original_name=f"voice_{timestamp}.ogg",
+                       extension="ogg",
+                       duration=message["voice"].get("duration", 0),
+                   )
+       
+    6:         if "audio" in message:
+    1:             audio = message["audio"]
+    1:             original_name = audio.get("file_name", f"audio_{timestamp}.mp3")
+    2:             return MediaMessage(
+    1:                 file_id=audio["file_id"],
+    1:                 kind="audio",
+    1:                 original_name=original_name,
+    1:                 extension=original_name.rsplit(".", 1)[-1],
+    1:                 duration=audio.get("duration", 0),
+                   )
+       
+    5:         if "video" in message:
+    1:             video = message["video"]
+    1:             original_name = video.get("file_name", f"video_{timestamp}.mp4")
+    2:             return MediaMessage(
+    1:                 file_id=video["file_id"],
+    1:                 kind="video",
+    1:                 original_name=original_name,
+    1:                 extension=original_name.rsplit(".", 1)[-1] if "." in original_name else "mp4",
+    1:                 duration=video.get("duration", 0),
+                   )
+       
+    4:         if "video_note" in message:
+    1:             video_note = message["video_note"]
+    2:             return MediaMessage(
+    1:                 file_id=video_note["file_id"],
+    1:                 kind="video_note",
+    1:                 original_name=f"video_note_{timestamp}.mp4",
+    1:                 extension="mp4",
+    1:                 duration=video_note.get("duration", 0),
+                   )
+       
+    3:         if "document" in message:
+                   document = message["document"]
+                   mime = document.get("mime_type", "")
+                   original_name = document.get("file_name", "")
+                   if mime.startswith(("audio/", "video/")) or original_name.lower().endswith(MEDIA_EXTENSIONS):
+                       if not original_name:
+                           original_name = f"document_{timestamp}.m4a"
+                       return MediaMessage(
+                           file_id=document["file_id"],
+                           kind="document",
+                           original_name=original_name,
+                           extension=original_name.rsplit(".", 1)[-1],
+                           duration=document.get("duration", 0),
+                       )
+       
+    3:         return None
+       
+    2:     @staticmethod
+    2:     def safe_filename(original_name: str, fallback_kind: str, extension: str) -> str:
+    3:         cleaned = re.sub(r"[^a-zA-Z0-9._-]", "_", original_name)
+    3:         if not cleaned or cleaned.startswith("___"):
+                   return f"{fallback_kind}_{int(time.time())}.{extension}"
+    3:         return cleaned
+       
+       
+    2: class TelegramUpdateHandler:
+    1:     def __init__(
+               self,
+               settings: ListenerSettings,
+               api_client: TelegramApiClient,
+               status_provider: TranscriptionStatusProvider,
+               pipeline_launcher: PipelineLauncher,
+               file_downloader: TelegramFileDownloader,
+               url_task_store: UrlTaskStore,
+               interpreter: MessageInterpreter | None = None,
+           ):
+    9:         self.settings = settings
+    9:         self.api_client = api_client
+    9:         self.status_provider = status_provider
+    9:         self.pipeline_launcher = pipeline_launcher
+    9:         self.file_downloader = file_downloader
+    9:         self.url_task_store = url_task_store
+    9:         self.interpreter = interpreter or MessageInterpreter()
+       
+    1:     def handle(self, update: dict) -> None:
+    9:         if "message" in update:
+    8:             self._handle_message(update["message"])
+    8:             return
+    1:         if "callback_query" in update:
+    1:             self._handle_callback(update["callback_query"])
+       
+    1:     def _handle_message(self, message: dict) -> None:
+    8:         chat_id = str(message.get("chat", {}).get("id"))
+    8:         text = message.get("text", "")
+    8:         message_id = message.get("message_id")
+    8:         logger.info(f"[RECV MESSAGE] Chat: {chat_id}, ID: {message_id}, Text: {text[:100]}...")
+       
+    8:         if self.settings.owner_chat_id and chat_id != self.settings.owner_chat_id:
+    1:             logger.warning(f"[IGNORED] Unauthorized chat: {chat_id}")
+    1:             return
+       
+    7:         if text == "/status":
+    1:             self.api_client.send_message(chat_id, f"目前系統狀態：\n{self.status_provider.describe()}")
+    1:             return
+       
+    6:         media = self.interpreter.extract_media(message)
+    6:         if media:
+    3:             logger.info(f"[MEDIA DETECTED] Chat: {chat_id}, Kind: {media.kind}, Name: {media.original_name}")
+    3:             self._handle_media(chat_id, media)
+    3:             return
+       
+    3:         combined_text = self.interpreter.combined_text(message)
+    3:         urls = self.interpreter.extract_supported_urls(combined_text)
+    3:         if urls:
+    3:             logger.info(f"[URLS EXTRACTED] Chat: {chat_id}, Count: {len(urls)}, URLs: {urls}")
+    6:         for url in urls:
+    3:             self._send_url_confirmation(chat_id, url)
+       
+    1:     def _handle_media(self, chat_id: str, media: MediaMessage) -> None:
+    3:         logger.info(f"[PROCESSING MEDIA] Chat: {chat_id}, Kind: {media.kind}, File ID: {media.file_id}")
+       
+    3:         safe_name = self.interpreter.safe_filename(media.original_name, media.kind, media.extension)
+    3:         task_dir = telegram_media_output_dir(self.settings.base_dir / "output", media.kind, media.original_name)
+    3:         destination = task_dir / safe_name
+    6:         write_task_metadata(
+    3:             task_dir,
+    3:             {
+    3:                 "task_origin": "telegram",
+    3:                 "kind": media.kind,
+    3:                 "created_at": datetime.now().astimezone().isoformat(),
+    3:                 "chat_id": chat_id,
+    3:                 "original_name": media.original_name,
+    3:                 "file_id": media.file_id,
+    3:                 "duration": media.duration,
+                   },
+               )
+       
+    6:         self.api_client.send_message(
+    3:             chat_id,
+    3:             f"收到媒體檔案\n類型：{media.kind}\n檔名：{media.original_name}\n長度：{media.duration}秒\n\n正在下載並準備轉錄...",
+               )
+       
+    3:         if self.file_downloader.download(media.file_id, destination):
+    3:             logger.info(f"[DOWNLOAD SUCCESS] Path: {destination}")
+    3:             self.pipeline_launcher.run(chat_id=chat_id, local_file=destination)
+    3:             return
+       
+               logger.error(f"[DOWNLOAD FAILED] File ID: {media.file_id}")
+               self.api_client.send_message(chat_id, "下載檔案失敗。")
+       
+    1:     def _send_url_confirmation(self, chat_id: str, url: str) -> None:
+    3:         status = self.status_provider.describe()
+    3:         message = f"偵測到網址：\n{url}\n\n目前狀態：{status}\n\n是否啟動流程？"
+    3:         if status == "忙碌中":
+    1:             message += "\n(備註：新任務將會進入排隊隊伍，等待目前任務完成後自動開始)"
+       
+    3:         url_id = self.url_task_store.get_id_for_url(url)
+    3:         reply_markup = {
+    6:             "inline_keyboard": [[
+    3:                 {"text": "確認執行", "callback_data": f"exec|{url_id}"},
+    3:                 {"text": "取消", "callback_data": "cancel"},
+                   ]]
+               }
+    3:         logger.info(f"[SEND CONFIRMATION] Chat: {chat_id}, URL: {url}")
+    3:         self.api_client.send_message(chat_id, message, reply_markup=reply_markup)
+       
+    1:     def _handle_callback(self, callback_query: dict) -> None:
+    1:         callback_id = callback_query["id"]
+    1:         chat_id = callback_query["message"]["chat"]["id"]
+    1:         message_id = callback_query["message"]["message_id"]
+    1:         data = callback_query.get("data", "")
+    1:         logger.info(f"[RECV CALLBACK] Chat: {chat_id}, Message ID: {message_id}, Data: {data}")
+       
+    1:         if data.startswith("exec|"):
+    1:             url_id = data.split("|", 1)[1]
+    1:             url = self.url_task_store.get_url_by_id(url_id)
+    1:             if not url:
+                       logger.error(f"[CALLBACK ERROR] URL not found for ID: {url_id}")
+                       self.api_client.answer_callback_query(callback_id, "錯誤：找不到原始網址")
+                       self.api_client.send_message(chat_id, "任務啟動失敗：找不到原始網址。請重新傳送連結。")
+                       return
+       
+    1:             logger.info(f"[TASK STARTING] Chat: {chat_id}, URL: {url}")
+    1:             self.api_client.answer_callback_query(callback_id, "任務已啟動")
+    1:             self.api_client.edit_message_reply_markup(chat_id, message_id, reply_markup=None)
+    1:             self.api_client.send_message(chat_id, f"已啟動任務：\n{url}\n完成後將自動發送通知。")
+    1:             self.pipeline_launcher.run(chat_id=chat_id, url=url)
+    1:             return
+       
+               if data == "cancel":
+                   logger.info(f"[TASK CANCELLED] Chat: {chat_id}")
+                   self.api_client.answer_callback_query(callback_id, "已取消")
+                   self.api_client.edit_message_reply_markup(chat_id, message_id, reply_markup=None)
+                   self.api_client.send_message(chat_id, "任務已取消。")
+       
+       
+    2: class TelegramPoller:
+    1:     def __init__(self, api_client: TelegramApiClient, update_handler: TelegramUpdateHandler, sleep_seconds: int = 1):
+    1:         self.api_client = api_client
+    1:         self.update_handler = update_handler
+    1:         self.sleep_seconds = sleep_seconds
+    1:         self.last_update_id = 0
+       
+    1:     def poll_once(self) -> None:
+    1:         updates = self.api_client.get_updates(self.last_update_id + 1, timeout=30)
+    1:         if not updates or not updates.get("ok"):
+                   return
+       
+    3:         for update in updates.get("result", []):
+    2:             try:
+    2:                 logger.info(f"[RECV UPDATE] Update ID: {update.get('update_id')}")
+    2:                 self.update_handler.handle(update)
+    1:             except Exception as exc:
+    1:                 logger.error(f"[UPDATE ERROR] {update.get('update_id')}: {exc}")
+                   finally:
+    2:                 self.last_update_id = update["update_id"]
+       
+    1:     def run_forever(self) -> None:
+               logger.info("Telegram Listener started. Polling for updates...")
+               while True:
+                   try:
+                       self.poll_once()
+                       time.sleep(self.sleep_seconds)
+                   except KeyboardInterrupt:
+                       logger.info("Listener stopped by user.")
+                       break
+                   except Exception as exc:
+                       logger.error(f"[LOOP ERROR] {exc}")
+                       time.sleep(10)
+       
+       
+    1: def build_settings(base_dir: Path = BASE_DIR) -> ListenerSettings:
+           load_local_config(base_dir / "config" / "local_config.sh", os.environ)
+           return ListenerSettings(
+               base_dir=base_dir,
+               bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
+               owner_chat_id=os.environ.get("TELEGRAM_CHAT_ID"),
+               python_executable=sys.executable,
+           )
+       
+       
+    1: def build_poller(settings: ListenerSettings) -> TelegramPoller:
+           api_client = TelegramApiClient(settings)
+           status_provider = TranscriptionStatusProvider()
+           pipeline_launcher = PipelineLauncher(settings.base_dir, settings.python_executable)
+           file_downloader = TelegramFileDownloader(api_client, settings.bot_token)
+           url_task_store = UrlTaskStore(settings.base_dir / "output" / "telegram" / "url_tasks.json")
+           update_handler = TelegramUpdateHandler(
+               settings=settings,
+               api_client=api_client,
+               status_provider=status_provider,
+               pipeline_launcher=pipeline_launcher,
+               file_downloader=file_downloader,
+               url_task_store=url_task_store,
+           )
+           return TelegramPoller(api_client, update_handler)
+       
+       
+    1: def setup_logging(base_dir: Path) -> None:
+           log_dir = base_dir / "logs"
+           log_dir.mkdir(parents=True, exist_ok=True)
+           log_file = log_dir / "telegram_listener.log"
+           
+           formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+           
+           file_handler = logging.FileHandler(log_file, encoding="utf-8")
+           file_handler.setFormatter(formatter)
+           logger.addHandler(file_handler)
+           
+           console_handler = logging.StreamHandler(sys.stdout)
+           console_handler.setFormatter(formatter)
+           logger.addHandler(console_handler)
+           
+           logger.setLevel(logging.INFO)
+       
+       
+    2: class SingletonLock:
+    1:     def __init__(self, lock_file: Path):
+               self.lock_file = lock_file
+               self.fd = None
+       
+    1:     def acquire(self) -> bool:
+               try:
+                   self.fd = open(self.lock_file, "w")
+                   fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                   self.fd.write(str(os.getpid()))
+                   self.fd.flush()
+                   return True
+               except (IOError, BlockingIOError):
+                   return False
+       
+    1:     def release(self) -> None:
+               if self.fd:
+                   try:
+                       fcntl.flock(self.fd, fcntl.LOCK_UN)
+                       self.fd.close()
+                   except Exception:
+                       pass
+                   if self.lock_file.exists():
+                       try:
+                           self.lock_file.unlink()
+                       except Exception:
+                           pass
+       
+       
+    1: def main() -> int:
+           settings = build_settings()
+           setup_logging(settings.base_dir)
+       
+           lock = SingletonLock(Path("/tmp/telegram_listener.pid"))
+           if not lock.acquire():
+               # Do not use logger here if logging is not fully initialized or might conflict, 
+               # but setup_logging was already called.
+               logger.error("Another instance of telegram_listener.py is already running. Exiting.")
+               return 1
+       
+           try:
+               if not settings.bot_token:
+                   logger.error("TELEGRAM_BOT_TOKEN not found in local_config.sh")
+                   return 1
+       
+               api_client = TelegramApiClient(settings)
+               logger.info("Clearing any existing webhooks...")
+               api_client.delete_webhook()
+       
+               build_poller(settings).run_forever()
+           finally:
+               lock.release()
+       
+           return 0
+       
+       
+    1: if __name__ == "__main__":
+           raise SystemExit(main())

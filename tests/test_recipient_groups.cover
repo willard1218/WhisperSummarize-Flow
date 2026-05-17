@@ -1,0 +1,46 @@
+    1: from __future__ import annotations
+       
+    1: import os
+    1: import tempfile
+    1: import unittest
+    1: from pathlib import Path
+    1: from unittest.mock import patch
+       
+    1: from tools.recipient_groups import load_recipient_groups, resolve_emails
+       
+       
+    2: class RecipientGroupTests(unittest.TestCase):
+    1:     def test_load_recipient_groups_normalizes_and_filters(self) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             path = Path(temp_dir) / "groups.json"
+    2:             path.write_text(
+    1:                 '{"groups":{"team":[" Alice@example.com ","bad","bob@example.com"],"empty":[]}}',
+    1:                 encoding="utf-8",
+                   )
+       
+    1:             groups = load_recipient_groups(path)
+       
+    1:             self.assertEqual(groups, {"team": ["alice@example.com", "bob@example.com"]})
+       
+    1:     def test_resolve_emails_merges_direct_group_and_global(self) -> None:
+    1:         subscription = {
+    1:             "emails": ["direct@example.com", "Direct@example.com", "bad"],
+    1:             "recipient_group": "team",
+    1:             "recipient_groups": ["ops"],
+               }
+    1:         groups = {
+    1:             "team": ["alice@example.com"],
+    1:             "ops": ["bob@example.com"],
+               }
+       
+    2:         with patch.dict(os.environ, {"GLOBAL_RECIPIENTS": "global@example.com,invalid"}, clear=False):
+    1:             resolved = resolve_emails(subscription, groups)
+       
+    2:         self.assertEqual(
+    1:             resolved,
+    1:             ["alice@example.com", "bob@example.com", "direct@example.com", "global@example.com"],
+               )
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()

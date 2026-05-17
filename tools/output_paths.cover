@@ -1,0 +1,94 @@
+       #!/usr/bin/env python3
+       
+    2: from __future__ import annotations
+       
+    2: import json
+    2: import re
+    2: from datetime import datetime
+    2: from pathlib import Path
+    2: from urllib.parse import urlparse
+       
+       
+    2: def sanitize_path_segment(value: str, fallback: str = "item") -> str:
+    9:     cleaned = re.sub(r'[\\/:*?"<>|]+', " ", value)
+    9:     cleaned = re.sub(r"\s+", " ", cleaned).strip().rstrip(".")
+    9:     cleaned = cleaned.replace("/", " ").replace("\\", " ")
+    9:     return cleaned or fallback
+       
+       
+    2: def slugify_segment(value: str, fallback: str = "item") -> str:
+    7:     cleaned = sanitize_path_segment(value, fallback=fallback)
+    7:     slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", cleaned).strip("-")
+    7:     return slug or fallback
+       
+       
+    2: def youtube_channel_directory_name(channel_url: str) -> str:
+    1:     parsed = urlparse(channel_url)
+    4:     segments = [segment for segment in parsed.path.split("/") if segment]
+    1:     if segments and segments[0].startswith("@"):
+    1:         return sanitize_path_segment(segments[0][1:], fallback="youtube-channel")
+           if segments:
+               return sanitize_path_segment(segments[0], fallback="youtube-channel")
+           return "youtube-channel"
+       
+       
+    2: def podcast_directory_name(podcast_title: str, fallback: str = "podcast") -> str:
+    1:     return sanitize_path_segment(podcast_title, fallback=fallback)
+       
+       
+    2: def output_root_for_subscription(base_output_root: Path, kind: str) -> Path:
+    2:     return base_output_root / kind
+       
+       
+    2: def subscribed_podcast_output_dir(base_output_root: Path, podcast_title: str) -> Path:
+    1:     return output_root_for_subscription(base_output_root, "podcast") / podcast_directory_name(podcast_title)
+       
+       
+    2: def subscribed_youtube_output_dir(base_output_root: Path, channel_url: str) -> Path:
+    1:     return output_root_for_subscription(base_output_root, "youtube") / youtube_channel_directory_name(channel_url)
+       
+       
+    2: def youtube_video_id(url: str) -> str | None:
+    3:     watch_match = re.search(r"[?&]v=([a-zA-Z0-9_-]+)", url)
+    3:     if watch_match:
+    3:         return watch_match.group(1)
+           short_match = re.search(r"youtu\.be/([a-zA-Z0-9_-]+)", url)
+           if short_match:
+               return short_match.group(1)
+           return None
+       
+       
+    2: def infer_podcast_slug(url: str) -> str:
+    2:     parsed = urlparse(url)
+   11:     segments = [segment for segment in parsed.path.split("/") if segment]
+    2:     if segments:
+    2:         return slugify_segment(segments[-1], fallback="podcast")
+           return "podcast"
+       
+       
+    2: def telegram_url_output_dir(base_output_root: Path, url: str) -> Path:
+    4:     if "youtube.com" in url or "youtu.be" in url:
+    2:         return base_output_root / "telegram" / "youtube" / (youtube_video_id(url) or "unknown-video")
+           
+    2:     if "podcasts.apple.com" in url:
+    1:         return base_output_root / "telegram" / "apple_podcast" / infer_podcast_slug(url)
+           
+    1:     if "soundon.fm" in url:
+    1:         return base_output_root / "telegram" / "soundon_podcast" / infer_podcast_slug(url)
+       
+           return base_output_root / "telegram" / "podcast" / infer_podcast_slug(url)
+       
+       
+    2: def telegram_media_output_dir(base_output_root: Path, media_kind: str, original_name: str, now: datetime | None = None) -> Path:
+    5:     timestamp = (now or datetime.now()).strftime("%Y%m%d_%H%M%S")
+    5:     bucket = "video" if media_kind in ("video", "video_note") else "audio"
+    5:     stem = Path(original_name).stem if original_name else media_kind
+    5:     slug = slugify_segment(stem, fallback=media_kind)
+    5:     return base_output_root / "telegram" / bucket / f"{timestamp}_{slug}"
+       
+       
+    2: def write_task_metadata(directory: Path, payload: dict) -> Path:
+    3:     directory.mkdir(parents=True, exist_ok=True)
+    3:     metadata_path = directory / "metadata.json"
+    3:     metadata_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    3:     return metadata_path

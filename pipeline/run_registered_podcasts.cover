@@ -1,0 +1,104 @@
+       #!/usr/bin/env python3
+       
+    1: import argparse
+    1: import json
+    1: import os
+    1: import subprocess
+    1: import sys
+    1: import xml.etree.ElementTree as ET
+    1: import time
+    1: from dataclasses import dataclass
+    1: from datetime import date
+    1: from pathlib import Path
+    1: from typing import Optional
+       
+    1: sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    1: sys.path.insert(0, str(Path(__file__).resolve().parent))
+       
+    1: from download_latest_podcast import fetch_bytes, NO_EPISODE_EXIT_CODE
+    1: from recipient_groups import resolve_emails, load_recipient_groups
+    1: from notifier import marker_path_for, send_mail
+    1: from output_paths import podcast_directory_name, subscribed_podcast_output_dir
+       
+   10: @dataclass
+    2: class PodcastSyncResult:
+    2:     audio_path: Optional[Path] = None
+    2:     specific_url: Optional[str] = None
+    2:     title: str = ""
+    2:     success: bool = False
+    2:     skipped: bool = False
+       
+    1: def parse_run_date(value: str) -> date:
+           try:
+               return date.fromisoformat(value)
+           except ValueError as exc:
+               raise argparse.ArgumentTypeError(f"Invalid date '{value}'. Expected YYYY-MM-DD.") from exc
+       
+    1: def load_subscriptions(path: Path) -> list[dict]:
+           if not path.exists():
+               return []
+           data = json.loads(path.read_text(encoding="utf-8"))
+           subscriptions = data.get("subscriptions", [])
+           return [item for item in subscriptions if isinstance(item, dict)]
+       
+    1: def resolve_podcast_title(rss_url: str) -> str:
+           try:
+               rss_data, _ = fetch_bytes(rss_url)
+               root = ET.fromstring(rss_data)
+               channel = root.find("channel")
+               return (channel.findtext("title") or "").strip() if channel is not None else ""
+           except Exception:
+               return ""
+       
+    1: def transcript_path_for(audio_path: Path) -> Path:
+           return audio_path.with_suffix("").with_name(audio_path.with_suffix("").name + ".srt.txt")
+       
+    1: def download_single_podcast(rss_url: str, output_dir: Path, run_date: Optional[date], downloader_bin: Path, title_hint: str = "") -> subprocess.CompletedProcess:
+           command = [sys.executable, str(downloader_bin), rss_url, "-o", str(output_dir)]
+           if run_date:
+               command.extend(["--episode-date", run_date.isoformat()])
+           if title_hint:
+               command.extend(["--show-title", title_hint])
+           return subprocess.run(command, text=True, capture_output=True)
+       
+    1: def sync_podcast_latest(source_url: str, output_dir: Path, run_date: Optional[date], debug_mode: bool = False) -> PodcastSyncResult:
+           """
+           Cohesive function to download and resolve metadata for the latest podcast episode.
+           """
+           result = PodcastSyncResult()
+           downloader_bin = Path(__file__).resolve().parent / "download_latest_podcast.py"
+           
+           # Ad-hoc specific episode URL
+           is_specific = "/episodes/" in source_url or "podcasts.apple.com" in source_url and "?i=" in source_url
+           if is_specific:
+               run_date = None
+       
+           dl_res = download_single_podcast(source_url, output_dir, run_date, downloader_bin)
+           
+           if dl_res.stdout:
+               print(dl_res.stdout, end="")
+           
+           if dl_res.returncode == NO_EPISODE_EXIT_CODE:
+               result.skipped = True
+               return result
+           
+           if dl_res.returncode == 0:
+               # Parse output for metadata
+               for line in dl_res.stdout.splitlines():
+                   if line.startswith("Saved: ") or line.startswith("File already exists: "):
+                       result.audio_path = Path(line.split(": ", 1)[1].strip())
+                   elif line.startswith("Episode URL: "):
+                       result.specific_url = line.split(": ", 1)[1].strip()
+                   elif line.startswith("Episode title: "):
+                       result.title = line.split(": ", 1)[1].strip()
+               
+               result.success = result.audio_path is not None
+               
+           return result
+       
+    1: def main() -> int:
+           # (Main remains for compatibility)
+           return 0
+       
+    1: if __name__ == "__main__":
+           pass

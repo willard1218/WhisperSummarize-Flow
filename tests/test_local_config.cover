@@ -1,0 +1,41 @@
+    1: from __future__ import annotations
+       
+    1: import tempfile
+    1: import unittest
+    1: from pathlib import Path
+       
+    1: from tools.local_config import load_local_config
+       
+       
+    2: class LoadLocalConfigTests(unittest.TestCase):
+    1:     def test_loads_export_lines_and_replaces_path(self) -> None:
+    2:         with tempfile.TemporaryDirectory() as temp_dir:
+    1:             config_path = Path(temp_dir) / "local_config.sh"
+    2:             config_path.write_text(
+    2:                 "\n".join(
+    1:                     [
+                               "# comment",
+                               "export TELEGRAM_BOT_TOKEN='abc123'",
+                               "PATH=/custom/bin:$PATH",
+                               "EMPTY_VALUE=",
+                           ]
+                       ),
+    1:                 encoding="utf-8",
+                   )
+       
+    1:             env = {"PATH": "/usr/bin"}
+    1:             result = load_local_config(config_path, env)
+       
+    1:             self.assertIs(result, env)
+    1:             self.assertEqual(env["TELEGRAM_BOT_TOKEN"], "abc123")
+    1:             self.assertEqual(env["PATH"], "/custom/bin:/usr/bin")
+    1:             self.assertEqual(env["EMPTY_VALUE"], "")
+       
+    1:     def test_missing_file_is_a_noop(self) -> None:
+    1:         env = {"PATH": "/usr/bin"}
+    1:         result = load_local_config(Path("/tmp/does-not-exist"), env)
+    1:         self.assertEqual(result["PATH"], "/usr/bin")
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()
