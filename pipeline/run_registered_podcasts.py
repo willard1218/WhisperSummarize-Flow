@@ -75,11 +75,6 @@ def sync_podcast_latest(source_url: str, output_dir: Path, run_date: Optional[da
 
     dl_res = download_single_podcast(source_url, output_dir, run_date, downloader_bin)
     
-    # Fallback for debug mode
-    if dl_res.returncode == NO_EPISODE_EXIT_CODE and debug_mode:
-        print(f"  [Podcast] Debug mode fallback: Fetching latest regardless of date")
-        dl_res = download_single_podcast(source_url, output_dir, None, downloader_bin)
-    
     if dl_res.stdout:
         print(dl_res.stdout, end="")
     

@@ -43,7 +43,8 @@ launchctl print gui/$(id -u)/com.whispersummarize.listener | sed -n '1,80p'
 1. 傳 `/status`，確認會回覆 `空閒中` 或 `忙碌中`。
 2. 傳一個 YouTube 網址，確認會出現「確認執行 / 取消」按鈕。
 3. 按下「確認執行」，確認 listener 有啟動 `run_daily_pipeline.py`。
-4. 傳一個小型音檔，確認 Bot 會先下載再啟動 pipeline。
+4. 傳一個小型音檔，確認 Bot 會先下載再啟動 pipeline.
+5. 檢查 `logs/telegram_listener.log` 是否有正確紀錄上述互動。
 
 ## 未來 AI 修改時的最低自我檢查標準
 
@@ -55,6 +56,24 @@ launchctl print gui/$(id -u)/com.whispersummarize.listener | sed -n '1,80p'
 - 若沒跑到某一步，原因是什麼。
 
 ## 常見偵錯與手動重跑指令 (Debug Records)
+
+### 監看 Telegram Listener 即時日誌
+```bash
+tail -f logs/telegram_listener.log
+```
+
+### 處理 409 Conflict 或重複啟動問題
+若 Telegram 回報 409 錯誤或發現訊息被重複處理，通常是多個實例在運行：
+```bash
+# 檢查並清理所有相關程序
+ps aux | grep telegram_listener.py | grep -v grep | awk '{print $2}' | xargs kill -9
+
+# 清理鎖定檔案
+rm -f /tmp/telegram_listener.pid
+
+# 重新啟動
+python3 tools/telegram_listener.py
+```
 
 ### 強制重新寄送今日摘要 (分開寄送、含網址)
 若已產生摘要但想測試新格式/新收件人，先刪除已發送標記：

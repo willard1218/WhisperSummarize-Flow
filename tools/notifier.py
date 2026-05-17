@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import os
 import smtplib
 import subprocess
@@ -11,6 +12,43 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Iterable, List
 from collections import defaultdict
+
+
+logger = logging.getLogger("notifier")
+
+def setup_notifier_logging(base_dir: Path | None = None):
+    if not base_dir:
+        # Try to infer base_dir
+        base_dir = Path(__file__).resolve().parent.parent
+    
+    log_dir = base_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "notifier.log"
+    
+    # We also want it to go to telegram_listener.log if we want a unified view, 
+    # but let's keep it separate for now or allow both.
+    # Actually, unified is better for the user's request.
+    unified_log = log_dir / "telegram_listener.log"
+    
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] [%(name)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    
+    file_handler = logging.FileHandler(unified_log, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+    
+    logger.setLevel(logging.INFO)
+
+# Initialize logging if possible
+try:
+    setup_notifier_logging()
+except Exception:
+    pass
+
 
 def strip_emojis(text: str) -> str:
     """Removes emojis and other non-BMP characters from text."""
@@ -36,7 +74,13 @@ class TelegramBotClient:
     def send(self, message: str, max_length: int = 4000) -> bool:
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
         all_ok = True
-        for index, chunk in enumerate(chunk_telegram_message(message, max_length=max_length)):
+        chunks = chunk_telegram_message(message, max_length=max_length)
+        
+        # Log the full message (or at least a much larger portion) for debugging "double send" issues
+        logger.info(f"[SEND TELEGRAM] Chat: {self.chat_id}, Chunks: {len(chunks)}")
+        logger.info(f"[TELEGRAM CONTENT] {message}")
+
+        for index, chunk in enumerate(chunks):
             if index > 0:
                 time.sleep(1)
             payload = {
@@ -53,10 +97,10 @@ class TelegramBotClient:
                 )
                 with urllib.request.urlopen(req, timeout=30) as response:
                     if response.status != 200:
-                        print(f"Failed to send Telegram message. Status: {response.status}")
+                        logger.error(f"[TELEGRAM FAILED] Status: {response.status}")
                         all_ok = False
             except Exception as e:
-                print(f"Error sending Telegram message: {e}")
+                logger.error(f"[TELEGRAM ERROR] {e}")
                 all_ok = False
         return all_ok
 
@@ -112,10 +156,8 @@ def send_telegram_msg(message: str) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     
-    print(f"DEBUG: send_telegram_msg called. chat_id={chat_id}, token_exists={bool(token)}")
-
     if not token or not chat_id:
-        print("Telegram notification skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set.")
+        logger.warning("Telegram notification skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set.")
         return False
     return TelegramBotClient(token, chat_id).send(message)
 
@@ -133,10 +175,10 @@ class BaseNotifier:
         raise NotImplementedError
 
     def log_event(self, status: str, seconds: float, item: str = "", detail: str = ""):
-        parts = ["EVENT", self.name, f"status={status}", f"seconds={seconds:.2f}"]
+        parts = [f"[{self.name.upper()} EVENT]", f"status={status}", f"seconds={seconds:.2f}"]
         if item: parts.append(f'item="{item}"')
         if detail: parts.append(f'detail="{detail}"')
-        print(" ".join(parts))
+        logger.info(" ".join(parts))
 
 class MailNotifier(BaseNotifier):
     def __init__(self):
@@ -197,21 +239,26 @@ class TelegramNotifier(BaseNotifier):
         # Only notify if there's something meaningful to report (at least one non-skipped item)
         processed_items = [item for item in items if item.download_ready or item.failed]
         if not processed_items:
-            print("Telegram notification skipped: No non-skipped items to report.")
             return
 
         try:
             # 2. Detailed summaries
             for item in items:
-                if item.mail_body and item.mail_attachment_path:
-                    marker = marker_path_for(item.mail_attachment_path, chat_id or "telegram")
-                    if not marker.exists():
-                        time.sleep(1)
-                        # Add a simple prefix to the detailed message with the run date
-                        prefix = f"[Summary] {args.run_date}\n"
-                        msg = f"{prefix}[Detail] # {item.title or item.label}\n\n{item.mail_body}"
-                        if send_telegram_msg(msg):
-                            marker.touch()
+                if not (item.mail_body and item.mail_attachment_path):
+                    logger.warning(f"[TELEGRAM SKIP] Item {item.label} missing mail_body or mail_attachment_path")
+                    continue
+
+                marker = marker_path_for(item.mail_attachment_path, chat_id or "telegram")
+                if marker.exists():
+                    logger.info(f"[TELEGRAM SKIP] Item {item.label} already notified (marker exists)")
+                    continue
+
+                time.sleep(1)
+                # Add a simple prefix to the detailed message with the run date
+                prefix = f"[Summary] {args.run_date}\n"
+                msg = f"{prefix}[Detail] # {item.title or item.label}\n\n{item.mail_body}"
+                if send_telegram_msg(msg):
+                    marker.touch()
             
             self.log_event("ok", time.monotonic()-t_start)
         except Exception as e:

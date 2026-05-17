@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -20,6 +23,10 @@ sys.path.insert(0, str(BASE_DIR / "tools"))
 
 from local_config import load_local_config
 from output_paths import telegram_media_output_dir, write_task_metadata
+
+
+logger = logging.getLogger("telegram_listener")
+
 
 
 URL_PATTERN = re.compile(
@@ -59,6 +66,9 @@ class TelegramApiClient:
         url = self.settings.api_url + method
         payload = json.dumps(data).encode("utf-8") if data else None
         
+        if method != "getUpdates":
+            logger.info(f"[API CALL] Method: {method}, Data: {data}")
+
         for attempt in range(3):
             request = urllib.request.Request(
                 url,
@@ -69,10 +79,10 @@ class TelegramApiClient:
                 with urllib.request.urlopen(request, timeout=60) as response:
                     res_data = json.loads(response.read().decode())
                     if not res_data.get("ok"):
-                        print(f"API Error ({method}): {res_data.get('description')}", flush=True)
+                        logger.error(f"[API ERROR] {method}: {res_data.get('description')}")
                     return res_data
             except Exception as exc:
-                print(f"API Attempt {attempt+1} failed ({method}): {exc}", flush=True)
+                logger.warning(f"[API ATTEMPT {attempt+1} FAILED] {method}: {exc}")
                 if attempt < 2:
                     time.sleep(2)
                 else:
@@ -107,9 +117,9 @@ class TelegramApiClient:
     def get_file(self, file_id: str) -> dict | None:
         return self.call_api("getFile", {"file_id": file_id})
 
+    def delete_webhook(self, drop_pending_updates: bool = False) -> dict | None:
+        return self.call_api("deleteWebhook", {"drop_pending_updates": drop_pending_updates})
 
-import fcntl
-import hashlib
 
 class UrlTaskStore:
     """Stores full URLs and provides a short ID for Telegram callback_data limits."""
@@ -237,7 +247,7 @@ class TelegramFileDownloader:
 
         file_path = response["result"]["file_path"]
         url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
-        print(f"Downloading {url} to {destination}")
+        logger.info(f"[DOWNLOADING] {url} to {destination}")
         urllib.request.urlretrieve(url, destination)
         return True
 
@@ -353,10 +363,11 @@ class TelegramUpdateHandler:
     def _handle_message(self, message: dict) -> None:
         chat_id = str(message.get("chat", {}).get("id"))
         text = message.get("text", "")
-        print(f"Incoming message from chat_id: {chat_id}, text: {text[:50]}...", flush=True)
+        message_id = message.get("message_id")
+        logger.info(f"[RECV MESSAGE] Chat: {chat_id}, ID: {message_id}, Text: {text[:100]}...")
 
         if self.settings.owner_chat_id and chat_id != self.settings.owner_chat_id:
-            print(f"Ignored message from unauthorized chat: {chat_id}")
+            logger.warning(f"[IGNORED] Unauthorized chat: {chat_id}")
             return
 
         if text == "/status":
@@ -365,23 +376,19 @@ class TelegramUpdateHandler:
 
         media = self.interpreter.extract_media(message)
         if media:
-            print(f"Detected media: {media.kind}")
+            logger.info(f"[MEDIA DETECTED] Chat: {chat_id}, Kind: {media.kind}, Name: {media.original_name}")
             self._handle_media(chat_id, media)
             return
 
         combined_text = self.interpreter.combined_text(message)
         urls = self.interpreter.extract_supported_urls(combined_text)
-        print(f"Extracted supported URLs: {urls}", flush=True)
+        if urls:
+            logger.info(f"[URLS EXTRACTED] Chat: {chat_id}, Count: {len(urls)}, URLs: {urls}")
         for url in urls:
             self._send_url_confirmation(chat_id, url)
 
     def _handle_media(self, chat_id: str, media: MediaMessage) -> None:
-        print("--- Audio/Video Message Received ---", flush=True)
-        print(f"Chat ID: {chat_id}", flush=True)
-        print(f"Kind: {media.kind}", flush=True)
-        print(f"Original Name: {media.original_name}", flush=True)
-        print(f"Duration: {media.duration}s", flush=True)
-        print(f"File ID: {media.file_id}", flush=True)
+        logger.info(f"[PROCESSING MEDIA] Chat: {chat_id}, Kind: {media.kind}, File ID: {media.file_id}")
 
         safe_name = self.interpreter.safe_filename(media.original_name, media.kind, media.extension)
         task_dir = telegram_media_output_dir(self.settings.base_dir / "output", media.kind, media.original_name)
@@ -405,11 +412,11 @@ class TelegramUpdateHandler:
         )
 
         if self.file_downloader.download(media.file_id, destination):
-            print(f"Successfully downloaded to: {destination}", flush=True)
+            logger.info(f"[DOWNLOAD SUCCESS] Path: {destination}")
             self.pipeline_launcher.run(chat_id=chat_id, local_file=destination)
             return
 
-        print(f"Failed to download file_id: {media.file_id}", flush=True)
+        logger.error(f"[DOWNLOAD FAILED] File ID: {media.file_id}")
         self.api_client.send_message(chat_id, "下載檔案失敗。")
 
     def _send_url_confirmation(self, chat_id: str, url: str) -> None:
@@ -425,6 +432,7 @@ class TelegramUpdateHandler:
                 {"text": "取消", "callback_data": "cancel"},
             ]]
         }
+        logger.info(f"[SEND CONFIRMATION] Chat: {chat_id}, URL: {url}")
         self.api_client.send_message(chat_id, message, reply_markup=reply_markup)
 
     def _handle_callback(self, callback_query: dict) -> None:
@@ -432,15 +440,18 @@ class TelegramUpdateHandler:
         chat_id = callback_query["message"]["chat"]["id"]
         message_id = callback_query["message"]["message_id"]
         data = callback_query.get("data", "")
+        logger.info(f"[RECV CALLBACK] Chat: {chat_id}, Message ID: {message_id}, Data: {data}")
 
         if data.startswith("exec|"):
             url_id = data.split("|", 1)[1]
             url = self.url_task_store.get_url_by_id(url_id)
             if not url:
+                logger.error(f"[CALLBACK ERROR] URL not found for ID: {url_id}")
                 self.api_client.answer_callback_query(callback_id, "錯誤：找不到原始網址")
                 self.api_client.send_message(chat_id, "任務啟動失敗：找不到原始網址。請重新傳送連結。")
                 return
 
+            logger.info(f"[TASK STARTING] Chat: {chat_id}, URL: {url}")
             self.api_client.answer_callback_query(callback_id, "任務已啟動")
             self.api_client.edit_message_reply_markup(chat_id, message_id, reply_markup=None)
             self.api_client.send_message(chat_id, f"已啟動任務：\n{url}\n完成後將自動發送通知。")
@@ -448,6 +459,7 @@ class TelegramUpdateHandler:
             return
 
         if data == "cancel":
+            logger.info(f"[TASK CANCELLED] Chat: {chat_id}")
             self.api_client.answer_callback_query(callback_id, "已取消")
             self.api_client.edit_message_reply_markup(chat_id, message_id, reply_markup=None)
             self.api_client.send_message(chat_id, "任務已取消。")
@@ -467,23 +479,24 @@ class TelegramPoller:
 
         for update in updates.get("result", []):
             try:
+                logger.info(f"[RECV UPDATE] Update ID: {update.get('update_id')}")
                 self.update_handler.handle(update)
             except Exception as exc:
-                print(f"Update Error ({update.get('update_id')}): {exc}", flush=True)
+                logger.error(f"[UPDATE ERROR] {update.get('update_id')}: {exc}")
             finally:
                 self.last_update_id = update["update_id"]
 
     def run_forever(self) -> None:
-        print("Telegram Listener started. Polling for updates...", flush=True)
+        logger.info("Telegram Listener started. Polling for updates...")
         while True:
             try:
                 self.poll_once()
                 time.sleep(self.sleep_seconds)
             except KeyboardInterrupt:
-                print("\nListener stopped by user.")
+                logger.info("Listener stopped by user.")
                 break
             except Exception as exc:
-                print(f"Loop Error: {exc}")
+                logger.error(f"[LOOP ERROR] {exc}")
                 time.sleep(10)
 
 
@@ -514,13 +527,77 @@ def build_poller(settings: ListenerSettings) -> TelegramPoller:
     return TelegramPoller(api_client, update_handler)
 
 
+def setup_logging(base_dir: Path) -> None:
+    log_dir = base_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "telegram_listener.log"
+    
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    logger.setLevel(logging.INFO)
+
+
+class SingletonLock:
+    def __init__(self, lock_file: Path):
+        self.lock_file = lock_file
+        self.fd = None
+
+    def acquire(self) -> bool:
+        try:
+            self.fd = open(self.lock_file, "w")
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.fd.write(str(os.getpid()))
+            self.fd.flush()
+            return True
+        except (IOError, BlockingIOError):
+            return False
+
+    def release(self) -> None:
+        if self.fd:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_UN)
+                self.fd.close()
+            except Exception:
+                pass
+            if self.lock_file.exists():
+                try:
+                    self.lock_file.unlink()
+                except Exception:
+                    pass
+
+
 def main() -> int:
     settings = build_settings()
-    if not settings.bot_token:
-        print("Error: TELEGRAM_BOT_TOKEN not found in local_config.sh")
+    setup_logging(settings.base_dir)
+
+    lock = SingletonLock(Path("/tmp/telegram_listener.pid"))
+    if not lock.acquire():
+        # Do not use logger here if logging is not fully initialized or might conflict, 
+        # but setup_logging was already called.
+        logger.error("Another instance of telegram_listener.py is already running. Exiting.")
         return 1
 
-    build_poller(settings).run_forever()
+    try:
+        if not settings.bot_token:
+            logger.error("TELEGRAM_BOT_TOKEN not found in local_config.sh")
+            return 1
+
+        api_client = TelegramApiClient(settings)
+        logger.info("Clearing any existing webhooks...")
+        api_client.delete_webhook()
+
+        build_poller(settings).run_forever()
+    finally:
+        lock.release()
+
     return 0
 
 

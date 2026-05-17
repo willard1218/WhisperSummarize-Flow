@@ -150,6 +150,7 @@ def check_status():
             
             for task_dir in sorted(type_dir.iterdir(), key=os.path.getmtime, reverse=True):
                 if not task_dir.is_dir(): continue
+                if task_dir.name == "reports": continue
                 
                 # Check folder name (starts with date for media) or mtime
                 st_dir = task_dir.stat()

@@ -46,7 +46,9 @@ python3 tools/register_youtube_channel.py 'URL' --recipient-group 'GROUP'
 - `tools/telegram_listener.py`: **Telegram Bot 互動監聽器**。
   - **URL 啟動**：直接將 YouTube、SoundOn 或 Apple Podcast 網址傳給 Bot。Bot 會先回覆確認按鈕；按下「確認執行」後才會建立任務。具備「長網址自動轉換 ID」機制以符合 Telegram 限制。
   - **忙碌狀態**：若目前已有轉錄工作持有 lock，Bot 會顯示「忙碌中」，新任務仍可確認並排隊。
-  - **媒體轉錄**：直接傳送「語音訊息」、「音訊檔案」或「視訊檔案」(`.m4a`, `.mp3`, `.wav`, `.ogg`, `.flac`, `.aac`, `.mp4`, `.mov`, `.mkv`) 給 Bot，它會自動下載並開始轉錄。
+  - **媒體轉錄**：直接傳送「語音訊息」、「音訊檔案」或「視訊檔案」給 Bot，它會自動下載並開始轉錄。
+  - **單一執行實例 (Singleton)**：使用 `/tmp/telegram_listener.pid` 確保同一時間只有一個 listener 在執行，防止重複處理訊息及 409 Conflict 錯誤。
+  - **詳細日誌**：所有互動、API 呼叫與錯誤都會記錄在 `logs/telegram_listener.log`，方便排除「傳一次執行兩次」等問題。
   - **授權限制**：若 `TELEGRAM_CHAT_ID` 有設定，只有該 chat 可觸發流程。
 - `schedule/update_schedule.sh`: 修改 `launchd` 排程時間（macOS）。
 - `gensrt.sh`: 核心轉錄引擎。整合了 Whisper 與全域鎖，確保轉錄過程不衝突且具備斷點續傳能力。
