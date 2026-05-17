@@ -43,11 +43,11 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 base_dir="$(dirname "$script_dir")"
 
-source_plist="$base_dir/schedule/com.willard.whisper-summarize-flow.plist"
-target_plist="$HOME/Library/LaunchAgents/com.willard.whisper-summarize-flow.plist"
+source_plist="$base_dir/schedule/com.whispersummarize.daily.plist"
+target_plist="$HOME/Library/LaunchAgents/com.whispersummarize.daily.plist"
 runner_path="$base_dir/schedule/run_soundon_daily.sh"
 
-label="com.willard.whisper-summarize-flow"
+label="com.whispersummarize.daily"
 uid="$(id -u)"
 
 /usr/bin/python3 - "$source_plist" "$target_plist" "$runner_path" "$mode" "${hour:-}" "${start_hour:-}" "${end_hour:-}" "$minute" <<'PY'
@@ -73,7 +73,7 @@ else:
     ]
 
 data = {
-    "Label": "com.willard.whisper-summarize-flow",
+    "Label": "com.whispersummarize.daily",
     "ProgramArguments": ["/bin/bash", runner_path],
     "RunAtLoad": False,
     "StartCalendarInterval": start_calendar_interval,

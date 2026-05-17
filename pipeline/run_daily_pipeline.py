@@ -48,7 +48,10 @@ from transcribers import BaseTranscriber, WhisperCPPTranscriber, WhisperKitTrans
 
 def get_transcriber(args) -> BaseTranscriber:
     if args.transcriber_type == "whisperkit":
-        bin_path = os.environ.get("WHISPERKIT_BIN", "/Users/willard/Downloads/WhisperKit/.build/arm64-apple-macosx/release/whisperkit-cli")
+        bin_path = os.environ.get("WHISPERKIT_BIN")
+        if not bin_path:
+            # Try to find it in common locations or just fail if not set
+            bin_path = "whisperkit-cli" # Assume it's in PATH
         model_path = os.environ.get("WHISPERKIT_MODEL_PATH")
         return WhisperKitTranscriber(bin_path, model_path)
     else:
@@ -158,8 +161,15 @@ class PodcastDownloader(BaseDownloader):
         res = sync_podcast_latest(item.source_url, item.output_dir, context.args.run_date, debug_mode=context.args.debug)
         
         if res.skipped:
-            self.log_event("skipped", time.monotonic()-t_start, item.label, "no episode")
-            return True
+            if context.args.url: # Ad-hoc task from Telegram/CLI
+                item.failed = True
+                error_msg = f"❌ 找不到該日期的單集: {item.label}"
+                item.messages.append(error_msg)
+                self.log_event("failed", time.monotonic()-t_start, item.label, "no episode for specific request")
+                return False
+            else:
+                self.log_event("skipped", time.monotonic()-t_start, item.label, "no episode")
+                return True
             
         if res.success:
             item.audio_path = res.audio_path
@@ -469,15 +479,21 @@ def process_item_full_lifecycle(item: DailyItem, args, context: PipelineContext,
                             context.report_status(f"✅ 下載完成: {item.label}")
                     else:
                         item.failed = True
-                        context.report_status(f"❌ 下載失敗: {item.label}")
+                        error_msg = f"❌ 下載失敗: {item.label}"
+                        context.report_status(error_msg)
+                        item.messages.append(error_msg)
                 except Exception as e:
-                    print(f"Error downloading {item.label}: {e}")
                     item.failed = True
+                    error_msg = f"❌ 下載錯誤 ({item.label}): {e}"
+                    print(error_msg)
+                    item.messages.append(error_msg)
                 break
         
         if not handled and not item.failed:
             item.failed = True
-            context.report_status(f"❌ 錯誤: 找不到支援的下載器 ({item.label})")
+            error_msg = f"❌ 錯誤: 找不到支援的下載器 ({item.label})"
+            context.report_status(error_msg)
+            item.messages.append(error_msg)
 
     if item.failed or not item.download_ready:
         return
@@ -517,7 +533,9 @@ def process_item_full_lifecycle(item: DailyItem, args, context: PipelineContext,
                     print(f"EVENT transcribe status=ok seconds={time.monotonic()-t_start:.2f} item=\"{item.label}\" detail=\"{item.transcript_path.name}\"")
                 else: 
                     item.failed = True
-                    context.report_status(f"❌ 轉錄失敗: {item.label}")
+                    error_msg = f"❌ 轉錄失敗: {item.label}"
+                    context.report_status(error_msg)
+                    item.messages.append(error_msg)
     else:
         # If transcription is disabled, still try to find existing transcript to continue
         if existing and existing.exists():
@@ -567,15 +585,34 @@ def process_item_full_lifecycle(item: DailyItem, args, context: PipelineContext,
         
         if target_txt and target_txt.exists():
             t_start = time.monotonic()
-            summary_path = summarize_file(target_txt, item.prompt_file)
-            if summary_path and summary_path.exists():
-                item.mail_body = summary_path.read_text(encoding="utf-8")
-                context.report_status(f"✅ 摘要完成: {item.label}")
-                print(f"EVENT summarize status=ok seconds={time.monotonic()-t_start:.2f} item=\"{item.label}\" detail=\"{summary_path.name}\"")
-            else:
-                context.report_status(f"❌ 摘要失敗: {item.label}")
+            try:
+                summary_path = summarize_file(target_txt, item.prompt_file)
+                if summary_path and summary_path.exists():
+                    item.mail_body = summary_path.read_text(encoding="utf-8")
+                    context.report_status(f"✅ 摘要完成: {item.label}")
+                    print(f"EVENT summarize status=ok seconds={time.monotonic()-t_start:.2f} item=\"{item.label}\" detail=\"{summary_path.name}\"")
+                else:
+                    raise RuntimeError(f"摘要結果為空或檔案未產生: {item.label}")
+            except Exception as e:
+                item.failed = True
+                error_msg = f"❌ 摘要失敗: {item.label} - {str(e)}"
+                context.report_status(error_msg)
+                item.messages.append(error_msg)
 
     # 5. Notify
+    if not item.mail_attachment_path and item.transcript_path:
+        item.mail_attachment_path = item.transcript_path
+
+    # If failed, ensure ERROR_REPORT_RECIPIENT is notified if set
+    if item.failed:
+        error_recipient = os.environ.get("ERROR_REPORT_RECIPIENT")
+        if error_recipient and error_recipient not in item.emails:
+            item.emails.append(error_recipient)
+        
+        # Prepare error body if empty
+        if not item.mail_body:
+            item.mail_body = f"任務執行失敗: {item.label}\n錯誤訊息:\n" + "\n".join(item.messages)
+
     notifiers = get_notifiers()
     for notifier in notifiers:
         if notifier.is_enabled(args):
