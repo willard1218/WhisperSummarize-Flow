@@ -1,6 +1,7 @@
 import subprocess
 import os
 import json
+import re
 from pathlib import Path
 from abc import ABC, abstractmethod
 
@@ -84,11 +85,33 @@ class WhisperKitTranscriber(BaseTranscriber):
         cmd += ["--report-path", str(report_dir), "--report"]
 
         print(f"Running WhisperKit: {' '.join(cmd)}")
-        res = subprocess.run(cmd)
         
-        # WhisperKit produces a JSON report. We need to find it and convert it to .srt.txt and .txt
-        # for the rest of the pipeline to work.
-        # The report is usually named after the audio file.
+        segments = []
+        speaker_pattern = re.compile(r"^SPEAKER\s+\S+\s+\d+\s+(\d+\.\d+)\s+(\d+\.\d+)\s+(.+?)\s+<NA>\s+(\S+)\s+<NA>\s+<NA>")
+        
+        # Stream output to console while capturing speaker segments
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        if process.stdout:
+            for line in process.stdout:
+                print(line, end="")
+                match = speaker_pattern.match(line.strip())
+                if match:
+                    start = float(match.group(1))
+                    duration = float(match.group(2))
+                    segments.append({
+                        "start": start,
+                        "end": start + duration,
+                        "text": match.group(3).strip(),
+                        "speaker": match.group(4)
+                    })
+        
+        process.wait()
+        
+        if segments:
+            # Successfully captured speaker info from stdout
+            return WhisperKitReportWriter(audio_path).write(segments)
+
+        # Fallback: WhisperKit produces a JSON report. We need to find it and convert it to .srt.txt and .txt
         # Example: reports/<audio_name>/transcription.json or reports/<audio_name>.json
         audio_stem = wav_path.stem
         report_json = report_dir / audio_stem / "transcription.json"
@@ -96,7 +119,7 @@ class WhisperKitTranscriber(BaseTranscriber):
         if not report_json.exists():
             report_json = report_dir / f"{audio_stem}.json"
         
-        if res.returncode == 0 and report_json.exists():
+        if process.returncode == 0 and report_json.exists():
             return self._process_report(report_json, audio_path)
         
         return None
