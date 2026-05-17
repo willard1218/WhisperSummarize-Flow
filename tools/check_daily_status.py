@@ -44,7 +44,8 @@ def get_active_transcriptions():
         return []
 
 def check_status():
-    today = date.today().isoformat()
+    now = datetime.now()
+    today = now.date().isoformat()
     today_dots = today.replace("-", "⧸")
     active_wavs = get_active_transcriptions()
     
@@ -52,7 +53,7 @@ def check_status():
     pod_cfg = BASE_DIR / "config" / "subscriptions.json"
     yt_cfg = BASE_DIR / "config" / "youtube_subscriptions.json"
     
-    print(f"--- Daily Status Check ({today}) ---")
+    print(f"--- Daily Status Check ({today} {now.strftime('%H:%M:%S')}) ---")
     
     # 1. Podcasts
     if pod_cfg.exists():
@@ -78,15 +79,19 @@ def check_status():
 
             for f in files:
                 if not f.is_file(): continue
-                mtime = date.fromtimestamp(f.stat().st_mtime).isoformat()
-                if mtime == today or today in f.name or today_dots in f.name:
+                st = f.stat()
+                mtime_dt = datetime.fromtimestamp(st.st_mtime)
+                mtime_date = mtime_dt.date().isoformat()
+                
+                if mtime_date == today or today in f.name or today_dots in f.name:
                     found_any = True
                     status = get_file_status(f)
                     if status:
                         stem = f.name.split(".")[0]
                         key = f"{stem}_{status}"
                         if key not in seen_stems:
-                            print(f"  - {status}: {f.name}")
+                            time_str = mtime_dt.strftime("%H:%M:%S")
+                            print(f"  - {status} ({time_str}): {f.name}")
                             seen_stems.add(key)
             
             if not found_any:
@@ -115,15 +120,19 @@ def check_status():
 
             for f in files:
                 if not f.is_file(): continue
-                mtime = date.fromtimestamp(f.stat().st_mtime).isoformat()
-                if mtime == today or today in f.name or today_dots in f.name:
+                st = f.stat()
+                mtime_dt = datetime.fromtimestamp(st.st_mtime)
+                mtime_date = mtime_dt.date().isoformat()
+
+                if mtime_date == today or today in f.name or today_dots in f.name:
                     found_any = True
                     status = get_file_status(f)
                     if status:
                         stem = f.name.split(".")[0]
                         key = f"{stem}_{status}"
                         if key not in seen_stems:
-                            print(f"  - {status}: {f.name}")
+                            time_str = mtime_dt.strftime("%H:%M:%S")
+                            print(f"  - {status} ({time_str}): {f.name}")
                             seen_stems.add(key)
             
             if not found_any:
@@ -135,7 +144,7 @@ def check_status():
         print(f"\n[Telegram Tasks]")
         found_any = False
         # Scan subdirectories for today's tasks
-        for task_type in ["audio", "video", "youtube", "podcast"]:
+        for task_type in ["audio", "video", "youtube", "apple_podcast", "soundon_podcast"]:
             type_dir = tg_root / task_type
             if not type_dir.exists(): continue
             
@@ -143,27 +152,36 @@ def check_status():
                 if not task_dir.is_dir(): continue
                 
                 # Check folder name (starts with date for media) or mtime
-                mtime = date.fromtimestamp(task_dir.stat().st_mtime).isoformat()
-                if mtime == today or task_dir.name.startswith(today.replace("-", "")):
+                st_dir = task_dir.stat()
+                mtime_dt_dir = datetime.fromtimestamp(st_dir.st_mtime)
+                mtime_date_dir = mtime_dt_dir.date().isoformat()
+
+                if mtime_date_dir == today or task_dir.name.startswith(today.replace("-", "")):
                     found_any = True
                     
                     # Check for active transcription in telegram task
                     task_out_dir_str = str(task_dir.resolve())
+                    is_transcribing = False
                     for wav in active_wavs:
                         if task_out_dir_str in wav:
                             print(f"  - Task: {task_type}/{task_dir.name} [🎙️ Transcribing]")
-                            found_any = True
-                    else:
+                            is_transcribing = True
+                            break
+                    
+                    if not is_transcribing:
                         print(f"  - Task: {task_type}/{task_dir.name}")
 
                     seen_stems = set()
                     for f in sorted(task_dir.glob("*"), key=os.path.getmtime, reverse=True):
                         status = get_file_status(f)
                         if status:
+                            st = f.stat()
+                            mtime_dt = datetime.fromtimestamp(st.st_mtime)
                             stem = f.name.split(".")[0]
                             key = f"{stem}_{status}"
                             if key not in seen_stems:
-                                print(f"    * {status}: {f.name}")
+                                time_str = mtime_dt.strftime("%H:%M:%S")
+                                print(f"    * {status} ({time_str}): {f.name}")
                                 seen_stems.add(key)
         
         if not found_any:
