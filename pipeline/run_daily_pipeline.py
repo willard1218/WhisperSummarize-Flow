@@ -69,6 +69,7 @@ class DailyItem:
     mail_attachment_path: Path | None = None
     mail_body: str = ""
     title: str = ""
+    duration_str: str = ""
     failed: bool = False
     download_ready: bool = False
     messages: list[str] = field(default_factory=list)
@@ -487,15 +488,30 @@ def process_item_full_lifecycle(item: DailyItem, args, context: PipelineContext,
     if args.enable_transcribe:
         summary_hant = existing.with_name(existing.name.replace(".srt.txt", ".zh-Hant.summary.md")) if existing else None
         
-        if (existing and existing.exists()) or (summary_hant and summary_hant.exists()): 
+        # Check if existing transcription is valid and up-to-date
+        is_stale = False
+        if existing and existing.exists():
+            if item.audio_path.stat().st_mtime > existing.stat().st_mtime:
+                is_stale = True
+        
+        if (existing and existing.exists() and not is_stale) or (summary_hant and summary_hant.exists() and not is_stale): 
             item.transcript_path = existing
+            if item.audio_path and item.audio_path.exists():
+                item.duration_str = transcriber.get_audio_duration(item.audio_path)
             context.report_status(f"⏭️ 轉錄已存在: {item.label}")
         else:
+            if is_stale:
+                context.report_status(f"🔄 偵測到音檔更新，重新轉錄: {item.label}")
             context.report_status(f"⏳ 等待轉錄資源: {item.label} ...")
             with transcribe_lock:
                 context.report_status(f"🎙️ 開始轉錄: {item.label} ({args.transcriber_type})")
                 t_start = time.monotonic()
                 item.transcript_path = transcriber.transcribe(item.audio_path, item.output_dir)
+                
+                # Extract duration
+                if item.audio_path and item.audio_path.exists():
+                    item.duration_str = transcriber.get_audio_duration(item.audio_path)
+
                 if item.transcript_path and item.transcript_path.exists(): 
                     context.report_status(f"✅ 轉錄完成: {item.label}")
                     print(f"EVENT transcribe status=ok seconds={time.monotonic()-t_start:.2f} item=\"{item.label}\" detail=\"{item.transcript_path.name}\"")

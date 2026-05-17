@@ -10,6 +10,26 @@ class BaseTranscriber(ABC):
         """Transcribes the audio file and returns the path to the resulting transcript."""
         pass
 
+    @staticmethod
+    def get_audio_duration(audio_path: Path) -> str:
+        """Returns the duration of the audio file in HH:MM:SS format using ffprobe."""
+        ffprobe_bin = os.environ.get("FFPROBE_BIN", "ffprobe")
+        try:
+            cmd = [
+                ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)
+            ]
+            output = subprocess.check_output(cmd, text=True).strip()
+            total_seconds = float(output)
+            
+            hours = int(total_seconds // 3600)
+            minutes = int((total_seconds % 3600) // 60)
+            seconds = int(total_seconds % 60)
+            return f"{hours:02}:{minutes:02}:{seconds:02}"
+        except Exception as e:
+            print(f"Error getting audio duration: {e}")
+            return "00:00:00"
+
 class WhisperCPPTranscriber(BaseTranscriber):
     def __init__(self, script_path: str):
         self.script_path = script_path
@@ -34,7 +54,14 @@ class WhisperKitTranscriber(BaseTranscriber):
     def transcribe(self, audio_path: Path, output_dir: Path) -> Path | None:
         # 1. Convert to WAV (16kHz mono)
         wav_path = audio_path.with_suffix(".wav")
-        if not wav_path.exists():
+        should_convert = not wav_path.exists()
+        if not should_convert:
+            # Check if source is newer
+            if audio_path.stat().st_mtime > wav_path.stat().st_mtime:
+                should_convert = True
+        
+        if should_convert:
+            print(f"[FFmpeg] Converting to 16kHz WAV: {audio_path.name}")
             subprocess.run([
                 self.ffmpeg_bin, "-y", "-i", str(audio_path),
                 "-ac", "1", "-ar", "16000", str(wav_path)

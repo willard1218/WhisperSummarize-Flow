@@ -165,6 +165,9 @@ class MailNotifier(BaseNotifier):
                 if item.source_url:
                     body_parts.append(f"Source URL: {item.source_url}")
                 
+                if getattr(item, "duration_str", ""):
+                    body_parts.append(f"Audio Duration: {item.duration_str}")
+                
                 if item.mail_body:
                     body_parts.append(item.mail_body)
                 else:
