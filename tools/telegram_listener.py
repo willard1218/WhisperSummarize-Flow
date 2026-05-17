@@ -99,6 +99,48 @@ class TelegramApiClient:
             payload["reply_markup"] = reply_markup
         return self.call_api("sendMessage", payload)
 
+    def send_document(self, chat_id: str | int, file_path: Path, caption: str | None = None) -> dict | None:
+        """Sends a document (file) to a Telegram chat using multipart/form-data."""
+        url = self.settings.api_url + "sendDocument"
+        boundary = "----------Boundary" + hashlib.md5(str(time.time()).encode()).hexdigest()
+        
+        parts = []
+        # Add chat_id part
+        parts.append(f"--{boundary}")
+        parts.append('Content-Disposition: form-data; name="chat_id"')
+        parts.append("")
+        parts.append(str(chat_id))
+        
+        # Add caption part if exists
+        if caption:
+            parts.append(f"--{boundary}")
+            parts.append('Content-Disposition: form-data; name="caption"')
+            parts.append("")
+            parts.append(caption)
+            
+        # Add file part
+        parts.append(f"--{boundary}")
+        parts.append(f'Content-Disposition: form-data; name="document"; filename="{file_path.name}"')
+        parts.append("Content-Type: application/octet-stream")
+        parts.append("")
+        
+        with open(file_path, "rb") as f:
+            file_content = f.read()
+            
+        body = b"\r\n".join([p.encode("utf-8") if isinstance(p, str) else p for p in parts])
+        body += b"\r\n" + file_content + b"\r\n--" + boundary.encode("utf-8") + b"--\r\n"
+        
+        req = urllib.request.Request(url, data=body)
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        
+        logger.info(f"[API CALL] sendDocument: {file_path}")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                return json.loads(response.read().decode())
+        except Exception as e:
+            logger.error(f"[API ERROR] sendDocument failed: {e}")
+            return None
+
     def edit_message_reply_markup(self, chat_id: str | int, message_id: int, reply_markup: dict | None = None) -> dict | None:
         payload = {"chat_id": chat_id, "message_id": message_id}
         if reply_markup is not None:
@@ -372,6 +414,14 @@ class TelegramUpdateHandler:
 
         if text == "/status":
             self.api_client.send_message(chat_id, f"目前系統狀態：\n{self.status_provider.describe()}")
+            return
+
+        if text == "/dump_log":
+            log_path = self.settings.base_dir / "logs" / "telegram_listener.log"
+            if log_path.exists():
+                self.api_client.send_document(chat_id, log_path, caption="目前系統日誌 (telegram_listener.log)")
+            else:
+                self.api_client.send_message(chat_id, "找不到日誌檔案。")
             return
 
         media = self.interpreter.extract_media(message)
