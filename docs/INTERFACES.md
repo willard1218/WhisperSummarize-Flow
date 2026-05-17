@@ -21,7 +21,10 @@ When adding a new source type:
 2.  **Output Path**: Add the routing logic to `tools/output_paths.py`.
 3.  **Metadata**: Always write a `metadata.json` in the task's output directory.
 
-## 4. Pipeline DailyItem
-Every task processed by the pipeline must be encapsulated in a `DailyItem` object.
-- **Essential Fields**: `label`, `kind`, `source_url`, `emails`, `output_dir`.
-- **Decision Tracking**: Use `item.log_trace("Reason")` to document why a stage was executed or skipped.
+## 5. Telegram Bot Commands
+When adding a new command to the listener:
+1.  **Handler**: Implement the logic in `_handle_message` within `tools/telegram_listener.py`.
+2.  **Registration**: Update the global bot command list using the `setMyCommands` API.
+    - **API Endpoint**: `https://api.telegram.org/bot<TOKEN>/setMyCommands`
+    - **Payload**: `{"commands": [{"command": "name", "description": "desc"}, ...]}`
+3.  **Validation**: Ensure the command works correctly and appears in the Telegram autocomplete menu after an app restart.

@@ -15,6 +15,10 @@
 - `config/`: JSON/Shell configuration files (ignored by git).
 - `output/`: Processed transcripts, audio, and summaries (ignored by git).
 
+## Telegram Bot Rules
+- **Command Registration**: Whenever a new command is added to `tools/telegram_listener.py`, it **must** be registered via the Telegram Bot API (`setMyCommands`) so that it appears in the autocomplete menu.
+- **Emoji Handling**: All bot responses should follow the "No Emojis" rule for system labels, but may use them sparingly in user-facing status reports if requested.
+
 ## Code & Logging
 - **No Emojis**: Do not use emojis in code, log messages, or any system-generated output. Use plain text labels (e.g., [OK], [FAILED], [SKIPPED]) instead.
 - **Language**: Core logic and comments should be in English or Traditional Chinese as established in the project.
