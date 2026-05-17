@@ -413,7 +413,17 @@ class TelegramUpdateHandler:
             return
 
         if text == "/status":
-            self.api_client.send_message(chat_id, f"目前系統狀態：\n{self.status_provider.describe()}")
+            system_status = self.status_provider.describe()
+            try:
+                # Execute check_daily_status.py and capture its output
+                cmd = [self.settings.python_executable, str(self.settings.base_dir / "tools" / "check_daily_status.py")]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                daily_status = res.stdout.strip() if res.returncode == 0 else "無法取得今日處理狀態。"
+            except Exception as e:
+                logger.error(f"[STATUS ERROR] Failed to run check_daily_status.py: {e}")
+                daily_status = "讀取狀態時發生錯誤。"
+            
+            self.api_client.send_message(chat_id, f"目前系統狀態：\n{system_status}\n\n{daily_status}")
             return
 
         if text == "/dump_log":
