@@ -67,11 +67,26 @@ def chunk_telegram_message(message: str, max_length: int = 4000) -> list[str]:
 
 
 class TelegramBotClient:
+    """A client for sending messages via the Telegram Bot API.
+    
+    Attributes:
+        token (str): The Telegram Bot API token.
+        chat_id (str): The target chat ID where messages will be sent.
+    """
     def __init__(self, token: str, chat_id: str):
         self.token = token
         self.chat_id = chat_id
 
     def send(self, message: str, max_length: int = 4000) -> bool:
+        """Sends a text message to the configured Telegram chat, automatically chunking long text.
+        
+        Args:
+            message (str): The text content to send.
+            max_length (int): The maximum length of each message chunk (default 4000).
+            
+        Returns:
+            bool: True if all chunks were sent successfully, False otherwise.
+        """
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
         all_ok = True
         chunks = chunk_telegram_message(message, max_length=max_length)
