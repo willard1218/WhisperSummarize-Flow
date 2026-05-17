@@ -423,23 +423,35 @@ import threading
 # --- Concurrency & Locking ---
 
 class TranscriptionLock:
-    """A file-based lock to ensure only one transcription runs at a time across processes."""
+    """A file-based lock to ensure only one transcription runs at a time across processes and threads."""
     def __init__(self, lock_file="/tmp/whisper_transcription.lock"):
         self.lock_file_path = Path(lock_file)
         self.lock_file = None
+        self.thread_lock = threading.Lock()
 
     def __enter__(self):
-        self.lock_file = open(self.lock_file_path, "w")
-        # Acquire an exclusive lock (blocking)
-        fcntl.flock(self.lock_file, fcntl.LOCK_EX)
-        self.lock_file.write(str(os.getpid()))
-        self.lock_file.flush()
+        # 1. Thread-level lock (within same process)
+        self.thread_lock.acquire()
+        
+        # 2. Process-level lock (across different processes)
+        try:
+            self.lock_file = open(self.lock_file_path, "w")
+            fcntl.flock(self.lock_file, fcntl.LOCK_EX)
+            self.lock_file.write(str(os.getpid()))
+            self.lock_file.flush()
+        except Exception:
+            self.thread_lock.release()
+            raise
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.lock_file:
-            fcntl.flock(self.lock_file, fcntl.LOCK_UN)
-            self.lock_file.close()
+        try:
+            if self.lock_file:
+                fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+                self.lock_file.close()
+                self.lock_file = None
+        finally:
+            self.thread_lock.release()
 
 def process_item_full_lifecycle(item: DailyItem, args, context: PipelineContext, transcribe_lock: TranscriptionLock, transcriber: BaseTranscriber):
     """Processes a single item through all stages of the pipeline."""

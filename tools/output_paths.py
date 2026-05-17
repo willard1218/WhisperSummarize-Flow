@@ -69,6 +69,13 @@ def infer_podcast_slug(url: str) -> str:
 def telegram_url_output_dir(base_output_root: Path, url: str) -> Path:
     if "youtube.com" in url or "youtu.be" in url:
         return base_output_root / "telegram" / "youtube" / (youtube_video_id(url) or "unknown-video")
+    
+    if "podcasts.apple.com" in url:
+        return base_output_root / "telegram" / "apple_podcast" / infer_podcast_slug(url)
+    
+    if "soundon.fm" in url:
+        return base_output_root / "telegram" / "soundon_podcast" / infer_podcast_slug(url)
+
     return base_output_root / "telegram" / "podcast" / infer_podcast_slug(url)
 
 

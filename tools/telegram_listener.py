@@ -26,7 +26,7 @@ URL_PATTERN = re.compile(
     r"https?://(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b"
     r"(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*)"
 )
-SUPPORTED_URL_HOSTS = ("youtube.com", "youtu.be", "soundon.fm")
+SUPPORTED_URL_HOSTS = ("youtube.com", "youtu.be", "soundon.fm", "podcasts.apple.com")
 MEDIA_EXTENSIONS = (".m4a", ".mp3", ".wav", ".ogg", ".flac", ".aac", ".mp4", ".mov", ".mkv")
 
 
@@ -58,17 +58,26 @@ class TelegramApiClient:
     def call_api(self, method: str, data: dict | None = None) -> dict | None:
         url = self.settings.api_url + method
         payload = json.dumps(data).encode("utf-8") if data else None
-        request = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return json.loads(response.read().decode())
-        except Exception as exc:
-            print(f"API Error ({method}): {exc}")
-            return None
+        
+        for attempt in range(3):
+            request = urllib.request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    res_data = json.loads(response.read().decode())
+                    if not res_data.get("ok"):
+                        print(f"API Error ({method}): {res_data.get('description')}", flush=True)
+                    return res_data
+            except Exception as exc:
+                print(f"API Attempt {attempt+1} failed ({method}): {exc}", flush=True)
+                if attempt < 2:
+                    time.sleep(2)
+                else:
+                    return None
+        return None
 
     def send_message(self, chat_id: str | int, text: str, reply_markup: dict | None = None) -> dict | None:
         payload = {
@@ -100,6 +109,35 @@ class TelegramApiClient:
 
 
 import fcntl
+import hashlib
+
+class UrlTaskStore:
+    """Stores full URLs and provides a short ID for Telegram callback_data limits."""
+    def __init__(self, store_path: Path):
+        self.path = store_path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _load(self) -> dict:
+        if not self.path.exists():
+            return {}
+        try:
+            return json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _save(self, data: dict):
+        self.path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def get_id_for_url(self, url: str) -> str:
+        url_hash = hashlib.md5(url.encode("utf-8")).hexdigest()[:16]
+        data = self._load()
+        data[url_hash] = url
+        self._save(data)
+        return url_hash
+
+    def get_url_by_id(self, url_id: str) -> str | None:
+        return self._load().get(url_id)
+
 
 class TranscriptionStatusProvider:
     def __init__(self, lock_paths: list[Path] | None = None):
@@ -294,6 +332,7 @@ class TelegramUpdateHandler:
         status_provider: TranscriptionStatusProvider,
         pipeline_launcher: PipelineLauncher,
         file_downloader: TelegramFileDownloader,
+        url_task_store: UrlTaskStore,
         interpreter: MessageInterpreter | None = None,
     ):
         self.settings = settings
@@ -301,6 +340,7 @@ class TelegramUpdateHandler:
         self.status_provider = status_provider
         self.pipeline_launcher = pipeline_launcher
         self.file_downloader = file_downloader
+        self.url_task_store = url_task_store
         self.interpreter = interpreter or MessageInterpreter()
 
     def handle(self, update: dict) -> None:
@@ -312,33 +352,36 @@ class TelegramUpdateHandler:
 
     def _handle_message(self, message: dict) -> None:
         chat_id = str(message.get("chat", {}).get("id"))
-        print(f"Incoming message from chat_id: {chat_id}")
+        text = message.get("text", "")
+        print(f"Incoming message from chat_id: {chat_id}, text: {text[:50]}...", flush=True)
 
         if self.settings.owner_chat_id and chat_id != self.settings.owner_chat_id:
             print(f"Ignored message from unauthorized chat: {chat_id}")
             return
 
-        text = message.get("text", "")
         if text == "/status":
             self.api_client.send_message(chat_id, f"目前系統狀態：\n{self.status_provider.describe()}")
             return
 
         media = self.interpreter.extract_media(message)
         if media:
+            print(f"Detected media: {media.kind}")
             self._handle_media(chat_id, media)
             return
 
         combined_text = self.interpreter.combined_text(message)
-        for url in self.interpreter.extract_supported_urls(combined_text):
+        urls = self.interpreter.extract_supported_urls(combined_text)
+        print(f"Extracted supported URLs: {urls}", flush=True)
+        for url in urls:
             self._send_url_confirmation(chat_id, url)
 
     def _handle_media(self, chat_id: str, media: MediaMessage) -> None:
-        print("--- Audio/Video Message Received ---")
-        print(f"Chat ID: {chat_id}")
-        print(f"Kind: {media.kind}")
-        print(f"Original Name: {media.original_name}")
-        print(f"Duration: {media.duration}s")
-        print(f"File ID: {media.file_id}")
+        print("--- Audio/Video Message Received ---", flush=True)
+        print(f"Chat ID: {chat_id}", flush=True)
+        print(f"Kind: {media.kind}", flush=True)
+        print(f"Original Name: {media.original_name}", flush=True)
+        print(f"Duration: {media.duration}s", flush=True)
+        print(f"File ID: {media.file_id}", flush=True)
 
         safe_name = self.interpreter.safe_filename(media.original_name, media.kind, media.extension)
         task_dir = telegram_media_output_dir(self.settings.base_dir / "output", media.kind, media.original_name)
@@ -362,11 +405,11 @@ class TelegramUpdateHandler:
         )
 
         if self.file_downloader.download(media.file_id, destination):
-            print(f"Successfully downloaded to: {destination}")
+            print(f"Successfully downloaded to: {destination}", flush=True)
             self.pipeline_launcher.run(chat_id=chat_id, local_file=destination)
             return
 
-        print(f"Failed to download file_id: {media.file_id}")
+        print(f"Failed to download file_id: {media.file_id}", flush=True)
         self.api_client.send_message(chat_id, "下載檔案失敗。")
 
     def _send_url_confirmation(self, chat_id: str, url: str) -> None:
@@ -375,9 +418,10 @@ class TelegramUpdateHandler:
         if status == "忙碌中":
             message += "\n(備註：新任務將會進入排隊隊伍，等待目前任務完成後自動開始)"
 
+        url_id = self.url_task_store.get_id_for_url(url)
         reply_markup = {
             "inline_keyboard": [[
-                {"text": "確認執行", "callback_data": f"exec|{url}"},
+                {"text": "確認執行", "callback_data": f"exec|{url_id}"},
                 {"text": "取消", "callback_data": "cancel"},
             ]]
         }
@@ -390,7 +434,13 @@ class TelegramUpdateHandler:
         data = callback_query.get("data", "")
 
         if data.startswith("exec|"):
-            url = data.split("|", 1)[1]
+            url_id = data.split("|", 1)[1]
+            url = self.url_task_store.get_url_by_id(url_id)
+            if not url:
+                self.api_client.answer_callback_query(callback_id, "錯誤：找不到原始網址")
+                self.api_client.send_message(chat_id, "任務啟動失敗：找不到原始網址。請重新傳送連結。")
+                return
+
             self.api_client.answer_callback_query(callback_id, "任務已啟動")
             self.api_client.edit_message_reply_markup(chat_id, message_id, reply_markup=None)
             self.api_client.send_message(chat_id, f"已啟動任務：\n{url}\n完成後將自動發送通知。")
@@ -419,12 +469,12 @@ class TelegramPoller:
             try:
                 self.update_handler.handle(update)
             except Exception as exc:
-                print(f"Update Error ({update.get('update_id')}): {exc}")
+                print(f"Update Error ({update.get('update_id')}): {exc}", flush=True)
             finally:
                 self.last_update_id = update["update_id"]
 
     def run_forever(self) -> None:
-        print("Telegram Listener started. Polling for updates...")
+        print("Telegram Listener started. Polling for updates...", flush=True)
         while True:
             try:
                 self.poll_once()
@@ -452,12 +502,14 @@ def build_poller(settings: ListenerSettings) -> TelegramPoller:
     status_provider = TranscriptionStatusProvider()
     pipeline_launcher = PipelineLauncher(settings.base_dir, settings.python_executable)
     file_downloader = TelegramFileDownloader(api_client, settings.bot_token)
+    url_task_store = UrlTaskStore(settings.base_dir / "output" / "telegram" / "url_tasks.json")
     update_handler = TelegramUpdateHandler(
         settings=settings,
         api_client=api_client,
         status_provider=status_provider,
         pipeline_launcher=pipeline_launcher,
         file_downloader=file_downloader,
+        url_task_store=url_task_store,
     )
     return TelegramPoller(api_client, update_handler)
 

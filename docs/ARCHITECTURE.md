@@ -33,7 +33,8 @@
 - `output/telegram/audio/<task_id>/`
 - `output/telegram/video/<task_id>/`
 - `output/telegram/youtube/<video_id>/`
-- `output/telegram/podcast/<podcast_slug>/`
+- `output/telegram/apple_podcast/<podcast_id>/`
+- `output/telegram/soundon_podcast/<episode_uuid>/`
 
 Telegram 任務資料夾會附帶 `metadata.json`，記錄來源 URL、chat id、建立時間與檔案資訊，方便後續重跑、補寄與除錯。
 
@@ -42,11 +43,12 @@ Telegram 任務資料夾會附帶 `metadata.json`，記錄來源 URL、chat id�
 `tools/telegram_listener.py` 已依職責切分為數個元件，避免單一函式同時負責輪詢、解析訊息、下載檔案與啟動 pipeline：
 
 - `ListenerSettings`: 封裝 bot token、工作目錄與授權 chat id。
-- `TelegramApiClient`: 單獨負責 Telegram Bot API 呼叫。
+- `TelegramApiClient`: 單獨負責 Telegram Bot API 呼叫，具備超時重試機制。
+- `UrlTaskStore`: 負責長網址與短 ID 的映射（MD5），解決 Telegram 64-byte callback_data 限制。
 - `TranscriptionStatusProvider`: 只負責判斷目前轉錄鎖狀態。
 - `PipelineLauncher`: 單獨組裝並啟動 `run_daily_pipeline.py`。
 - `TelegramFileDownloader`: 專責下載 Telegram 檔案。
-- `MessageInterpreter`: 專責解析支援的網址與媒體訊息。
+- `MessageInterpreter`: 專責解析支援的網址（YouTube/SoundOn/Apple Podcast）與媒體訊息。
 - `TelegramUpdateHandler`: 組合上述服務，處理單筆 update。
 - `TelegramPoller`: 專責長輪詢與 update offset 推進。
 

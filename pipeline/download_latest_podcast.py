@@ -65,7 +65,8 @@ class ApplePodcastsResolver(BaseRSSResolver):
         return parsed.netloc.lower() == "podcasts.apple.com"
 
     def resolve(self, url: str) -> str:
-        html = fetch_bytes(url).decode("utf-8", "ignore")
+        data, _ = fetch_bytes(url)
+        html = data.decode("utf-8", "ignore")
         patterns = [
             r'"feedUrl":"([^"]+)"',
             r'"feedUrl":"(https:[^"]+)"',
