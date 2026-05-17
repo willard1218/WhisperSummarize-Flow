@@ -1,5 +1,20 @@
 # Project Rules & Conventions
 
+## Project Structure Map
+- `pipeline/`: Core execution logic.
+  - `run_daily_pipeline.py`: Main entry point and orchestrator.
+  - `transcribers.py`: Audio-to-text engine wrappers (WhisperKit/Whisper.cpp).
+  - `run_registered_*.py`: Source-specific sync logic.
+- `tools/`: Utility modules.
+  - `notifier.py`: Telegram and Email notification delivery.
+  - `registry.py`: SQLite-based state management for processed tasks.
+  - `config_models.py`: Pydantic definitions for configuration.
+  - `logger.py`: Structured logging utility.
+  - `retry.py`: Exponential backoff decorator.
+- `prompts/`: System prompts for Gemini AI summarization.
+- `config/`: JSON/Shell configuration files (ignored by git).
+- `output/`: Processed transcripts, audio, and summaries (ignored by git).
+
 ## Code & Logging
 - **No Emojis**: Do not use emojis in code, log messages, or any system-generated output. Use plain text labels (e.g., [OK], [FAILED], [SKIPPED]) instead.
 - **Language**: Core logic and comments should be in English or Traditional Chinese as established in the project.
