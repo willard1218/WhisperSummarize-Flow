@@ -434,6 +434,33 @@ class TelegramUpdateHandler:
                 self.api_client.send_message(chat_id, "找不到日誌檔案。")
             return
 
+        if text.startswith("/AI_talk"):
+            prompt = text[len("/AI_talk"):].strip()
+            if not prompt:
+                self.api_client.send_message(chat_id, "請提供指令。用法: /AI_talk {您的指令}")
+                return
+            
+            self.api_client.send_message(chat_id, "正在處理 AI 請求，請稍候...")
+            try:
+                # Execute gemini cli in YOLO mode
+                # We use -y/--yolo for autonomous mode
+                cmd = ["/opt/homebrew/bin/gemini", "cli", "--yolo", prompt]
+                # Set timeout longer as AI tasks can take time
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=str(self.settings.base_dir))
+                output = res.stdout.strip()
+                if not output and res.stderr:
+                    output = f"發生錯誤：\n{res.stderr.strip()}"
+                elif not output:
+                    output = "AI 執行完成，但無輸出內容。"
+                
+                self.api_client.send_message(chat_id, f"AI 回應：\n\n{output}")
+            except subprocess.TimeoutExpired:
+                self.api_client.send_message(chat_id, "AI 執行超時 (5分鐘)。請縮小指令範圍。")
+            except Exception as e:
+                logger.error(f"[AI_TALK ERROR] {e}")
+                self.api_client.send_message(chat_id, f"執行 AI 指令時發生異常：{e}")
+            return
+
         media = self.interpreter.extract_media(message)
         if media:
             logger.info(f"[MEDIA DETECTED] Chat: {chat_id}, Kind: {media.kind}, Name: {media.original_name}")
