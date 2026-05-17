@@ -258,7 +258,28 @@ def main() -> int:
             print(f"No episode found for {args.episode_date.isoformat()} in feed {rss_url}.", file=sys.stderr)
             return NO_EPISODE_EXIT_CODE
     else:
-        item = channel.find("item")
+        # Check for Apple Podcast episode ID (?i=...)
+        apple_id = None
+        parsed_url = urllib.parse.urlparse(args.podcast_url)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        if "i" in query_params:
+            apple_id = query_params["i"][0]
+        
+        if apple_id:
+            item = None
+            for candidate in channel.findall("item"):
+                # Apple IDs usually match part of the guid or link
+                guid = candidate.findtext("guid")
+                link = candidate.findtext("link")
+                if (guid and apple_id in guid) or (link and apple_id in link):
+                    item = candidate
+                    break
+            
+            if not item:
+                print(f"Specific Apple episode {apple_id} not found in RSS. Falling back to latest.")
+                item = channel.find("item")
+        else:
+            item = channel.find("item")
 
     if item is None:
         print("RSS feed does not contain any episodes.", file=sys.stderr)

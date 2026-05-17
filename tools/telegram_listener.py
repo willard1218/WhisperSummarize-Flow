@@ -90,10 +90,10 @@ class TelegramApiClient:
         return self.call_api("sendMessage", payload)
 
     def edit_message_reply_markup(self, chat_id: str | int, message_id: int, reply_markup: dict | None = None) -> dict | None:
-        return self.call_api(
-            "editMessageReplyMarkup",
-            {"chat_id": chat_id, "message_id": message_id, "reply_markup": reply_markup},
-        )
+        payload = {"chat_id": chat_id, "message_id": message_id}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        return self.call_api("editMessageReplyMarkup", payload)
 
     def answer_callback_query(self, callback_query_id: str, text: str | None = None) -> dict | None:
         payload = {"callback_query_id": callback_query_id}

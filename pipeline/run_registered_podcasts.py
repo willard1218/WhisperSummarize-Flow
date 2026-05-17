@@ -69,7 +69,8 @@ def sync_podcast_latest(source_url: str, output_dir: Path, run_date: Optional[da
     downloader_bin = Path(__file__).resolve().parent / "download_latest_podcast.py"
     
     # Ad-hoc specific episode URL
-    if "/episodes/" in source_url:
+    is_specific = "/episodes/" in source_url or "podcasts.apple.com" in source_url and "?i=" in source_url
+    if is_specific:
         run_date = None
 
     dl_res = download_single_podcast(source_url, output_dir, run_date, downloader_bin)

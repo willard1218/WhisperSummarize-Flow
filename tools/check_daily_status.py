@@ -172,9 +172,11 @@ def check_status():
                         print(f"  - Task: {task_type}/{task_dir.name}")
 
                     seen_stems = set()
+                    found_any_files = False
                     for f in sorted(task_dir.glob("*"), key=os.path.getmtime, reverse=True):
                         status = get_file_status(f)
                         if status:
+                            found_any_files = True
                             st = f.stat()
                             mtime_dt = datetime.fromtimestamp(st.st_mtime)
                             stem = f.name.split(".")[0]
@@ -183,6 +185,9 @@ def check_status():
                                 time_str = mtime_dt.strftime("%H:%M:%S")
                                 print(f"    * {status} ({time_str}): {f.name}")
                                 seen_stems.add(key)
+                    
+                    if not found_any_files and not is_transcribing:
+                        print("    * ⏳ Waiting / In Progress...")
         
         if not found_any:
             print("  Status: No activity today")
