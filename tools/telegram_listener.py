@@ -434,17 +434,21 @@ class TelegramUpdateHandler:
                 self.api_client.send_message(chat_id, "找不到日誌檔案。")
             return
 
-        if text.lower().startswith("/ai_talk "):
-            prompt = text[len("/ai_talk "):].strip()
+        if text.lower().startswith("/ai_talk"):
+            # Check if there are parameters
+            prompt = text[len("/ai_talk"):].strip()
+            
             if not prompt:
-                # This case is less likely with the space check, but keep for safety
-                self.api_client.send_message(chat_id, "請提供指令。用法: /ai_talk {您的指令}")
+                self.api_client.send_message(
+                    chat_id, 
+                    "⚠️ 請提供指令。\n\n用法範例：\n`/ai_talk 幫我檢查今日進度`",
+                    reply_markup={"force_reply": True, "selective": True}
+                )
                 return
             
             self.api_client.send_message(chat_id, "正在處理 AI 請求 (YOLO 模式)，請稍候...")
             try:
                 # Execute gemini cli in YOLO mode with --prompt for non-interactive execution
-                # Remove 'cli' keyword to avoid positional argument conflict with --prompt
                 cmd = ["/opt/homebrew/bin/gemini", "--yolo", "--prompt", prompt]
                 logger.info(f"[AI_TALK] Executing: {cmd}")
                 
