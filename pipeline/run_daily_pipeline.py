@@ -76,6 +76,10 @@ class DailyItem:
     failed: bool = False
     download_ready: bool = False
     messages: list[str] = field(default_factory=list)
+    trace: list[str] = field(default_factory=list)
+
+    def log_trace(self, message: str):
+        self.trace.append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 
 # --- OCP Pipeline Architecture ---
 
@@ -93,6 +97,10 @@ class PipelineContext:
                 send_telegram_msg(message)
             except Exception as e:
                 print(f"Failed to send Telegram status: {e}")
+    
+    def log_item_trace(self, item_index: int, message: str):
+        if 0 <= item_index < len(self.items):
+            self.items[item_index].log_trace(message)
 
 class BasePipelineStage:
     """Base class for all pipeline processing stages."""
