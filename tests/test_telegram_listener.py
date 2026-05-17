@@ -12,6 +12,7 @@ from tools.telegram_listener import (
     TelegramPoller,
     TelegramUpdateHandler,
     TranscriptionStatusProvider,
+    UrlTaskStore,
 )
 
 
@@ -78,38 +79,54 @@ class TelegramListenerTests(unittest.TestCase):
         api_client = FakeApiClient()
         launcher = FakeLauncher()
         downloader = FakeDownloader()
+        url_task_store = UrlTaskStore(Path(temp_dir) / "tasks.json")
         handler = TelegramUpdateHandler(
             settings=settings,
             api_client=api_client,
             status_provider=FakeStatusProvider(status),
             pipeline_launcher=launcher,
             file_downloader=downloader,
+            url_task_store=url_task_store,
         )
-        return handler, api_client, launcher, downloader
+        return handler, api_client, launcher, downloader, url_task_store
 
     def test_status_command_reports_current_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, _, _ = self.make_handler(temp_dir, status="忙碌中")
+            handler, api_client, _, _, _ = self.make_handler(temp_dir, status="忙碌中")
             handler.handle({"message": {"chat": {"id": "owner"}, "text": "/status"}})
 
             self.assertEqual(api_client.sent_messages[0][1], "目前系統狀態：\n忙碌中")
 
     def test_url_message_sends_confirmation_button(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, _, _ = self.make_handler(temp_dir, status="忙碌中")
+            handler, api_client, _, _, url_task_store = self.make_handler(temp_dir, status="忙碌中")
+            url = "https://youtube.com/watch?v=abc"
             handler.handle(
-                {"message": {"chat": {"id": "owner"}, "text": "https://youtube.com/watch?v=abc"}}
+                {"message": {"chat": {"id": "owner"}, "text": url}}
             )
 
             chat_id, text, reply_markup = api_client.sent_messages[0]
             self.assertEqual(chat_id, "owner")
             self.assertIn("是否啟動流程？", text)
-            self.assertIn("等待目前任務完成後自動開始", text)
-            self.assertEqual(reply_markup["inline_keyboard"][0][0]["callback_data"], "exec|https://youtube.com/watch?v=abc")
+            
+            # Check callback_data uses short ID
+            url_id = url_task_store.get_id_for_url(url)
+            self.assertEqual(reply_markup["inline_keyboard"][0][0]["callback_data"], f"exec|{url_id}")
+
+    def test_apple_podcast_url_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            handler, api_client, _, _, _ = self.make_handler(temp_dir)
+            url = "https://podcasts.apple.com/tw/podcast/id123"
+            handler.handle(
+                {"message": {"chat": {"id": "owner"}, "text": url}}
+            )
+
+            self.assertIn("偵測到網址", api_client.sent_messages[0][1])
+            self.assertIn(url, api_client.sent_messages[0][1])
 
     def test_media_message_downloads_and_launches_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, launcher, downloader = self.make_handler(temp_dir)
+            handler, api_client, launcher, downloader, _ = self.make_handler(temp_dir)
             handler.handle(
                 {
                     "message": {
@@ -129,7 +146,7 @@ class TelegramListenerTests(unittest.TestCase):
 
     def test_unauthorized_chat_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, launcher, _ = self.make_handler(temp_dir)
+            handler, api_client, launcher, _, _ = self.make_handler(temp_dir)
             handler.handle({"message": {"chat": {"id": "stranger"}, "text": "/status"}})
 
             self.assertEqual(api_client.sent_messages, [])
@@ -137,23 +154,26 @@ class TelegramListenerTests(unittest.TestCase):
 
     def test_callback_exec_starts_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, launcher, _ = self.make_handler(temp_dir)
+            handler, api_client, launcher, _, url_task_store = self.make_handler(temp_dir)
+            url = "https://youtube.com/watch?v=abc"
+            url_id = url_task_store.get_id_for_url(url)
+            
             handler.handle(
                 {
                     "callback_query": {
                         "id": "cb-1",
-                        "data": "exec|https://youtube.com/watch?v=abc",
+                        "data": f"exec|{url_id}",
                         "message": {"chat": {"id": "owner"}, "message_id": 10},
                     }
                 }
             )
 
             self.assertEqual(api_client.answered[0], ("cb-1", "任務已啟動"))
-            self.assertEqual(launcher.calls[0]["url"], "https://youtube.com/watch?v=abc")
+            self.assertEqual(launcher.calls[0]["url"], url)
 
     def test_video_message_downloads_and_launches_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, launcher, downloader = self.make_handler(temp_dir)
+            handler, api_client, launcher, downloader, _ = self.make_handler(temp_dir)
             handler.handle(
                 {
                     "message": {
@@ -170,7 +190,7 @@ class TelegramListenerTests(unittest.TestCase):
 
     def test_video_note_downloads_and_launches_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, launcher, downloader = self.make_handler(temp_dir)
+            handler, api_client, launcher, downloader, _ = self.make_handler(temp_dir)
             handler.handle(
                 {
                     "message": {
@@ -186,7 +206,7 @@ class TelegramListenerTests(unittest.TestCase):
 
     def test_caption_url_detection(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, _, _ = self.make_handler(temp_dir)
+            handler, api_client, _, _, _ = self.make_handler(temp_dir)
             handler.handle(
                 {
                     "message": {

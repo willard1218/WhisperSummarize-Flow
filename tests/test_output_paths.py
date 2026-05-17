@@ -31,6 +31,16 @@ class OutputPathTests(unittest.TestCase):
         result = telegram_url_output_dir(root, "https://youtube.com/watch?v=SBH44qRxxKU")
         self.assertEqual(result, Path("/tmp/output/telegram/youtube/SBH44qRxxKU"))
 
+    def test_telegram_apple_podcast_url(self) -> None:
+        root = Path("/tmp/output")
+        result = telegram_url_output_dir(root, "https://podcasts.apple.com/tw/podcast/id1552655948")
+        self.assertEqual(result, Path("/tmp/output/telegram/apple_podcast/id1552655948"))
+
+    def test_telegram_soundon_podcast_url(self) -> None:
+        root = Path("/tmp/output")
+        result = telegram_url_output_dir(root, "https://player.soundon.fm/p/uuid/episodes/episode-id")
+        self.assertEqual(result, Path("/tmp/output/telegram/soundon_podcast/episode-id"))
+
     def test_telegram_media_dir_buckets_audio_and_video(self) -> None:
         root = Path("/tmp/output")
         audio_dir = telegram_media_output_dir(root, "audio", "meeting note.m4a")

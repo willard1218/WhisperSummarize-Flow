@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from pipeline.run_daily_pipeline import DailyItem, YouTubeDownloader, build_items
+from pipeline.run_daily_pipeline import DailyItem, YouTubeDownloader, build_items, TranscriptionLock
 from pipeline.run_registered_youtube import YouTubeSyncResult
 
 
@@ -114,6 +114,54 @@ class RunDailyPipelineTests(unittest.TestCase):
 
         # verify use_archive=False was passed to sync_youtube_latest
         self.assertFalse(mock_sync.call_args.kwargs["use_archive"])
+
+    def test_transcription_lock_behaves_correctly(self) -> None:
+        import fcntl
+        import threading
+        import time
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_path = Path(temp_dir) / "test.lock"
+            lock = TranscriptionLock(lock_file=str(lock_path))
+            
+            # 1. Test basic re-entrance or concurrent thread acquisition
+            def acquire_and_hold(hold_seconds: float):
+                with lock:
+                    time.sleep(hold_seconds)
+            
+            t_start = time.time()
+            t1 = threading.Thread(target=acquire_and_hold, args=(0.2,))
+            t2 = threading.Thread(target=acquire_and_hold, args=(0.1,))
+            
+            t1.start()
+            time.sleep(0.05) # Ensure t1 gets it
+            t2.start()
+            
+            t1.join()
+            t2.join()
+            duration = time.time() - t_start
+            
+            # Should take at least 0.3s if sequential
+            self.assertGreaterEqual(duration, 0.3)
+
+            # 2. Test cross-process (using flock directly to simulate another process)
+            with open(lock_path, "w") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                
+                # Try to acquire in another thread (should block)
+                success = []
+                def try_acquire():
+                    with lock:
+                        success.append(True)
+                
+                t3 = threading.Thread(target=try_acquire)
+                t3.start()
+                t3.join(timeout=0.1)
+                
+                self.assertTrue(t3.is_alive()) # Still blocked
+                
+                fcntl.flock(f, fcntl.LOCK_UN)
+                t3.join(timeout=0.5)
+                self.assertTrue(len(success) > 0)
 
 
 if __name__ == "__main__":
