@@ -641,6 +641,7 @@ def main() -> int:
     parser.add_argument("--traditionalize-transcript", dest="enable_traditionalize", action="store_true", default=os.environ.get("ENABLE_TRADITIONALIZE", os.environ.get("OPENCC_TRADITIONALIZE", "1")) == "1")
     parser.add_argument("--opencc-config", default=os.environ.get("OPENCC_CONFIG", "s2twp.json"))
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be done without performing heavy tasks")
     
     # Stage toggles
     parser.add_argument("--enable-transcribe", type=int, default=int(os.environ.get("ENABLE_TRANSCRIBE", "1")))
