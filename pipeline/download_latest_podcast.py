@@ -202,6 +202,19 @@ def handle_direct_episode(url: str, output_dir: Path, show_title_hint: Optional[
 
 # --- Main Logic ---
 
+def resolve_apple_episode_guid(episode_id: str) -> Optional[str]:
+    """Uses iTunes API to find the RSS GUID for a given Apple Podcast episode ID."""
+    url = f"https://itunes.apple.com/lookup?id={episode_id}&entity=podcastEpisode"
+    try:
+        data, _ = fetch_bytes(url)
+        res = json.loads(data.decode("utf-8"))
+        for result in res.get("results", []):
+            if str(result.get("trackId")) == episode_id:
+                return result.get("episodeGuid")
+    except Exception as e:
+        print(f"Warning: iTunes API lookup failed for {episode_id}: {e}", file=sys.stderr)
+    return None
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Download the latest episode from a podcast RSS feed.")
     parser.add_argument("podcast_url", help="Podcast RSS feed URL, Apple Podcasts show URL, or SoundOn show URL")
@@ -262,22 +275,22 @@ def main() -> int:
         apple_id = None
         parsed_url = urllib.parse.urlparse(args.podcast_url)
         query_params = urllib.parse.parse_qs(parsed_url.query)
-        if "i" in query_params:
-            apple_id = query_params["i"][0]
-        
         if apple_id:
+            resolved_guid = resolve_apple_episode_guid(apple_id)
             item = None
             for candidate in channel.findall("item"):
-                # Apple IDs usually match part of the guid or link
                 guid = candidate.findtext("guid")
                 link = candidate.findtext("link")
-                if (guid and apple_id in guid) or (link and apple_id in link):
+                # Match by resolved GUID first, then fallback to matching the apple_id in guid/link as before
+                if (resolved_guid and guid == resolved_guid) or \
+                   (guid and apple_id in guid) or \
+                   (link and apple_id in link):
                     item = candidate
                     break
             
             if not item:
-                print(f"Specific Apple episode {apple_id} not found in RSS. Falling back to latest.")
-                item = channel.find("item")
+                print(f"Error: Specific Apple episode {apple_id} (GUID: {resolved_guid}) not found in RSS.", file=sys.stderr)
+                return 1
         else:
             item = channel.find("item")
 
