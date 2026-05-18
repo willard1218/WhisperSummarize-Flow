@@ -1,6 +1,5 @@
 import hashlib
 import json
-import logging
 import os
 import smtplib
 import subprocess
@@ -13,153 +12,68 @@ from pathlib import Path
 from typing import Iterable, List
 from collections import defaultdict
 
+# Use the centralized logger
+from logger import get_logger
 
-logger = logging.getLogger("notifier")
-
-def setup_notifier_logging(base_dir: Path | None = None):
-    if not base_dir:
-        # Try to infer base_dir
-        base_dir = Path(__file__).resolve().parent.parent
-    
-    log_dir = base_dir / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "notifier.log"
-    
-    # We also want it to go to telegram_listener.log if we want a unified view, 
-    # but let's keep it separate for now or allow both.
-    # Actually, unified is better for the user's request.
-    unified_log = log_dir / "telegram_listener.log"
-    
-    formatter = logging.Formatter("%(asctime)s [%(levelname)s] [%(name)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    
-    file_handler = logging.FileHandler(unified_log, encoding="utf-8")
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-    
-    if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
-    
-    logger.setLevel(logging.INFO)
-
-# Initialize logging if possible
-try:
-    setup_notifier_logging()
-except Exception:
-    pass
-
+logger = get_logger("notifier")
 
 def strip_emojis(text: str) -> str:
-    """Removes emojis and other non-BMP characters from text."""
     return "".join(c for c in text if ord(c) <= 0xFFFF)
 
-def marker_path_for(transcript_path: Path, email: str) -> Path:
-    """Returns the path to the marker file that indicates an email has been sent."""
-    digest = hashlib.sha1(email.encode("utf-8")).hexdigest()[:12]
-    return transcript_path.with_name(f"{transcript_path.name}.{digest}.mail-sent")
-
+def marker_path_for(transcript_path: Path, identifier: str) -> Path:
+    digest = hashlib.sha1(identifier.encode("utf-8")).hexdigest()[:12]
+    return transcript_path.with_name(f"{transcript_path.name}.{digest}.sent")
 
 def chunk_telegram_message(message: str, max_length: int = 4000) -> list[str]:
-    if max_length <= 0:
-        raise ValueError("max_length must be positive")
+    if max_length <= 0: raise ValueError("max_length must be positive")
     return [message[i:i + max_length] for i in range(0, len(message), max_length)] or [""]
 
-
 class TelegramBotClient:
-    """A client for sending messages via the Telegram Bot API.
-    
-    Attributes:
-        token (str): The Telegram Bot API token.
-        chat_id (str): The target chat ID where messages will be sent.
-    """
     def __init__(self, token: str, chat_id: str):
         self.token = token
         self.chat_id = chat_id
 
     def send(self, message: str, max_length: int = 4000) -> bool:
-        """Sends a text message to the configured Telegram chat, automatically chunking long text.
-        
-        Args:
-            message (str): The text content to send.
-            max_length (int): The maximum length of each message chunk (default 4000).
-            
-        Returns:
-            bool: True if all chunks were sent successfully, False otherwise.
-        """
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        all_ok = True
         chunks = chunk_telegram_message(message, max_length=max_length)
         
-        # Log the full message (or at least a much larger portion) for debugging "double send" issues
-        logger.info(f"[SEND TELEGRAM] Chat: {self.chat_id}, Chunks: {len(chunks)}")
-        logger.info(f"[TELEGRAM CONTENT] {message}")
+        logger.info(f"Sending Telegram chunks={len(chunks)} chat_id={self.chat_id}", action="send_telegram")
 
         for index, chunk in enumerate(chunks):
-            if index > 0:
-                time.sleep(1)
-            payload = {
-                "chat_id": self.chat_id,
-                "text": chunk,
-                "disable_web_page_preview": True,
-            }
-            data = json.dumps(payload).encode("utf-8")
+            if index > 0: time.sleep(1)
+            payload = {"chat_id": self.chat_id, "text": chunk, "disable_web_page_preview": True}
             try:
-                req = urllib.request.Request(
-                    url,
-                    data=data,
-                    headers={"Content-Type": "application/json"},
-                )
+                data = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
                 with urllib.request.urlopen(req, timeout=30) as response:
                     if response.status != 200:
-                        logger.error(f"[TELEGRAM FAILED] Status: {response.status}")
-                        all_ok = False
+                        logger.error(f"Telegram chunk send failed status={response.status}", action="send_failed")
+                        return False
             except Exception as e:
-                logger.error(f"[TELEGRAM ERROR] {e}")
-                all_ok = False
-        return all_ok
+                logger.error(f"Telegram error error=\"{e}\"", action="send_error")
+                return False
+        return True
 
-# Original functions maintained for backward compatibility (e.g., run_registered_podcasts.py)
 def send_mail(recipient: str, subject: str, attachment_paths: Path | Iterable[Path], body: str = "") -> None:
-    """Sends an email with optional body and attachments using SMTP."""
-    if isinstance(attachment_paths, Path):
-        attachments = [attachment_paths]
-    else:
-        attachments = list(attachment_paths)
-    if not attachments:
-        raise ValueError("attachment_paths must not be empty")
+    attachments = [attachment_paths] if isinstance(attachment_paths, Path) else list(attachment_paths)
+    if not attachments: raise ValueError("attachment_paths must not be empty")
 
-    host = os.environ.get("SMTP_HOST")
+    host, user, password = os.environ.get("SMTP_HOST"), os.environ.get("SMTP_USER"), os.environ.get("SMTP_PASS")
     port = int(os.environ.get("SMTP_PORT", 587))
-    user = os.environ.get("SMTP_USER")
-    password = os.environ.get("SMTP_PASS")
     from_addr = os.environ.get("SMTP_FROM", user)
 
     if not all([host, user, password]):
-        raise RuntimeError("SMTP settings are incomplete. Please configure SMTP_HOST, SMTP_USER, and SMTP_PASS in local_config.sh.")
+        raise RuntimeError("SMTP settings incomplete")
 
-    # Use SMTP
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = from_addr
     msg["To"] = recipient
-    
-    if body:
-        msg.set_content(body)
-    else:
-        body_lines = ["Attached files:"]
-        body_lines.extend(f"- {path.name}" for path in attachments)
-        msg.set_content("\n".join(body_lines))
+    msg.set_content(body or f"Attached: {', '.join(p.name for p in attachments)}")
 
-    for attachment_path in attachments:
-        with open(attachment_path, "rb") as f:
-            file_data = f.read()
-            msg.add_attachment(
-                file_data,
-                maintype="application",
-                subtype="octet-stream",
-                filename=attachment_path.name
-            )
+    for p in attachments:
+        with open(p, "rb") as f:
+            msg.add_attachment(f.read(), maintype="application", subtype="octet-stream", filename=p.name)
 
     with smtplib.SMTP(host, port) as server:
         server.starttls()
@@ -167,70 +81,36 @@ def send_mail(recipient: str, subject: str, attachment_paths: Path | Iterable[Pa
         server.send_message(msg)
 
 def send_telegram_msg(message: str) -> bool:
-    """Sends a message via Telegram Bot API using JSON, splitting long messages if necessary."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    
+    token, chat_id = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
-        logger.warning("Telegram notification skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set.")
+        logger.warning("Missing Telegram config", action="send_skipped")
         return False
     return TelegramBotClient(token, chat_id).send(message)
 
-# --- OCP Refactored Notifiers ---
-
 class BaseNotifier:
-    """Base class for all notification services."""
-    def __init__(self, name: str):
-        self.name = name
-
-    def is_enabled(self, args) -> bool:
-        raise NotImplementedError
-
-    def notify(self, items: List[any], args) -> None:
-        raise NotImplementedError
-
+    def __init__(self, name: str): self.name = name
+    def is_enabled(self, args) -> bool: raise NotImplementedError
+    def notify(self, items: List[any], args) -> None: raise NotImplementedError
     def log_event(self, status: str, seconds: float, item: str = "", detail: str = ""):
-        parts = [f"[{self.name.upper()} EVENT]", f"status={status}", f"seconds={seconds:.2f}"]
-        if item: parts.append(f'item="{item}"')
-        if detail: parts.append(f'detail="{detail}"')
-        logger.info(" ".join(parts))
+        msg = f"EVENT {self.name} status={status} duration={seconds:.2f}s"
+        if item: msg += f" item=\"{item}\""
+        if detail: msg += f" detail=\"{detail}\""
+        logger.info(msg, action="notify_event")
 
 class MailNotifier(BaseNotifier):
-    def __init__(self):
-        super().__init__("mail")
-
-    def is_enabled(self, args) -> bool:
-        return getattr(args, "enable_mail", False)
-
-    def notify(self, items: List[any], args) -> None:
+    def __init__(self): super().__init__("mail")
+    def is_enabled(self, args): return getattr(args, "enable_mail", False)
+    def notify(self, items, args):
         subject_date = args.run_date.isoformat()
         for item in items:
-            if not item.mail_attachment_path or item.failed:
-                continue
-            
+            if not item.mail_attachment_path or item.failed: continue
             for email in item.emails:
                 marker = marker_path_for(item.mail_attachment_path, email)
-                if marker.exists():
-                    continue
-
-                # Prepare subject and body for a single item
+                if marker.exists(): continue
+                
                 title = item.title or item.label
                 subject = f"{title} - {subject_date}"
-                
-                # Build the body content
-                body_parts = []
-                if item.source_url:
-                    body_parts.append(f"Source URL: {item.source_url}")
-                
-                if getattr(item, "duration_str", ""):
-                    body_parts.append(f"Audio Duration: {item.duration_str}")
-                
-                if item.mail_body:
-                    body_parts.append(item.mail_body)
-                else:
-                    body_parts.append(f"Attached: {item.mail_attachment_path.name}")
-                
-                body = "\n\n".join(body_parts)
+                body = "\n\n".join(filter(None, [f"Source: {item.source_url}", getattr(item, 'duration_str', ''), item.mail_body or f"Attached: {item.mail_attachment_path.name}"]))
                 
                 t_start = time.monotonic()
                 try:
@@ -241,55 +121,32 @@ class MailNotifier(BaseNotifier):
                     self.log_event("failed", 0, item.label, f"{email}: {e}")
 
 class TelegramNotifier(BaseNotifier):
-    def __init__(self):
-        super().__init__("telegram")
-
-    def is_enabled(self, args) -> bool:
-        return getattr(args, "enable_telegram", False)
-
-    def notify(self, items: List[any], args) -> None:
+    def __init__(self): super().__init__("telegram")
+    def is_enabled(self, args): return getattr(args, "enable_telegram", False)
+    def notify(self, items, args):
         t_start = time.monotonic()
-        chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-        
-        # Only notify if there's something meaningful to report (at least one non-skipped item)
-        processed_items = [item for item in items if item.download_ready or item.failed]
-        if not processed_items:
-            return
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "default")
+        processed = [it for it in items if it.download_ready or it.failed]
+        if not processed: return
 
         try:
-            # 2. Detailed summaries
             for item in items:
-                if not (item.mail_body and item.mail_attachment_path):
-                    logger.warning(f"[TELEGRAM SKIP] Item {item.label} missing mail_body or mail_attachment_path")
-                    continue
-
-                marker = marker_path_for(item.mail_attachment_path, chat_id or "telegram")
+                if not (item.mail_body and item.mail_attachment_path): continue
+                marker = marker_path_for(item.mail_attachment_path, chat_id)
                 if marker.exists():
-                    logger.info(f"[TELEGRAM SKIP] Item {item.label} already notified (marker exists)")
+                    logger.info(f"Telegram already sent item=\"{item.label}\"", action="notify_skip")
                     continue
-
+                
                 time.sleep(1)
-                # Add a simple prefix to the detailed message with the run date
-                prefix = f"[Summary] {args.run_date}\n"
-                msg = f"{prefix}[Detail] # {item.title or item.label}\n\n{item.mail_body}"
-                if send_telegram_msg(msg):
-                    marker.touch()
-            
+                msg = f"[Summary] {args.run_date}\n[Detail] # {item.title or item.label}\n\n{item.mail_body}"
+                if send_telegram_msg(msg): marker.touch()
             self.log_event("ok", time.monotonic()-t_start)
         except Exception as e:
-            self.log_event("failed", time.monotonic()-t_start, detail=str(e))
+            self.log_event("failed", 0, detail=str(e))
 
-# Registry of available notifiers
 def get_notifiers() -> List[BaseNotifier]:
-    """
-    Dynamically discovers and returns instances of all non-abstract Notifier classes.
-    This follows the Open-Closed Principle: adding a new notifier only requires 
-    defining a new class that inherits from BaseNotifier.
-    """
     notifiers = []
     for cls in BaseNotifier.__subclasses__():
-        try:
-            notifiers.append(cls())
-        except Exception as e:
-            print(f"Error instantiating notifier {cls.__name__}: {e}")
+        try: notifiers.append(cls())
+        except Exception as e: logger.error(f"Failed to load notifier {cls.__name__}: {e}", action="setup_error")
     return notifiers

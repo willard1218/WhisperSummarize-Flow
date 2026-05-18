@@ -20,6 +20,7 @@
 - **Emoji Handling**: All bot responses should follow the "No Emojis" rule for system labels, but may use them sparingly in user-facing status reports if requested.
 
 ## Code & Logging
+- **Structured Logging**: Use the `tools/logger.py` utility. Prefer Key-Value (KV) format for logs. Use keywords like `task`, `action`, `status`, and `duration` to provide context for AI agents.
 - **No Emojis**: Do not use emojis in code, log messages, or any system-generated output. Use plain text labels (e.g., [OK], [FAILED], [SKIPPED]) instead.
 - **Language**: Core logic and comments should be in English or Traditional Chinese as established in the project.
 - **Privacy**: Never log or commit private tokens, API keys, or personal information.

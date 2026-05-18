@@ -5,125 +5,88 @@ import urllib.request
 from pathlib import Path
 from typing import List, Optional
 
+# Use central logger
+from logger import get_logger
+
+logger = get_logger("summarizer")
+
 class BaseSummarizer:
-    def __init__(self, name: str):
-        self.name = name
-
-    def is_available(self) -> bool:
-        raise NotImplementedError
-
-    def summarize(self, full_prompt: str) -> Optional[str]:
-        raise NotImplementedError
+    def __init__(self, name: str): self.name = name
+    def is_available(self) -> bool: raise NotImplementedError
+    def summarize(self, full_prompt: str) -> Optional[str]: raise NotImplementedError
 
 class GeminiSummarizer(BaseSummarizer):
-    def __init__(self):
-        super().__init__("gemini")
-
+    def __init__(self): super().__init__("gemini")
     def is_available(self) -> bool:
         try:
             subprocess.run(["gemini", "--version"], capture_output=True, check=True)
             return True
-        except:
-            return False
-
+        except: return False
     def summarize(self, full_prompt: str) -> Optional[str]:
         try:
-            print(f"  [Gemini] 嘗試使用 gemini-3-pro-preview 模型...")
-            result = subprocess.run(
-                ["gemini", "ask", "-m", "gemini-3-pro-preview", "請看我輸入的內容並進行摘要"], 
-                input=full_prompt,
-                text=True,
-                capture_output=True,
-                check=True
-            )
-            return result.stdout
+            logger.info("Attempting Gemini Pro summary", action="summarize_start", model="gemini-3-pro-preview")
+            res = subprocess.run(["gemini", "ask", "-m", "gemini-3-pro-preview", "請看我輸入的內容並進行摘要"], input=full_prompt, text=True, capture_output=True, check=True)
+            return res.stdout
         except subprocess.CalledProcessError as e:
-            print(f"  [Gemini] Pro 模型摘要失敗，嘗試退回使用 gemini-3-flash-preview 模型... (原因: {e.stderr.strip()})")
+            logger.warning(f"Gemini Pro failed, falling back to Flash. error=\"{e.stderr.strip()}\"", action="summarize_fallback")
             try:
-                result = subprocess.run(
-                    ["gemini", "ask", "--skip-trust", "-m", "gemini-3-flash-preview", "請看我輸入的內容並進行摘要"], 
-                    input=full_prompt,
-                    text=True,
-                    capture_output=True,
-                    check=True
-                )
-                return result.stdout
-            except Exception:
-                return None
+                res = subprocess.run(["gemini", "ask", "--skip-trust", "-m", "gemini-3-flash-preview", "請看我輸入的內容並進行摘要"], input=full_prompt, text=True, capture_output=True, check=True)
+                return res.stdout
+            except Exception: return None
 
 class OllamaSummarizer(BaseSummarizer):
     def __init__(self, model: str = "qwen2.5:7b"):
         super().__init__("ollama")
         self.model = model
-
     def is_available(self) -> bool:
         try:
-            url = "http://localhost:11434/api/tags"
-            with urllib.request.urlopen(url, timeout=2) as response:
+            with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2) as response:
                 data = json.loads(response.read().decode())
                 models = [m["name"] for m in data.get("models", [])]
                 return self.model in models or any(m.startswith(self.model) for m in models)
-        except:
-            return False
-
+        except: return False
     def summarize(self, full_prompt: str) -> Optional[str]:
-        print(f"  [Ollama] 嘗試使用 {self.model} 模型...")
-        url = "http://localhost:11434/api/generate"
-        payload = {"model": self.model, "prompt": full_prompt, "stream": False}
+        logger.info(f"Attempting Ollama summary model={self.model}", action="summarize_start")
         try:
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req) as response:
-                result = json.loads(response.read().decode())
-                return result.get("response")
+            data = json.dumps({"model": self.model, "prompt": full_prompt, "stream": False}).encode("utf-8")
+            req = urllib.request.Request("http://localhost:11434/api/generate", data=data, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req) as res:
+                return json.loads(res.read().decode()).get("response")
         except Exception as e:
-            print(f"  [Ollama] 摘要失敗: {e}")
+            logger.error(f"Ollama failed error=\"{e}\"", action="summarize_error")
             return None
 
 def get_summarizers() -> List[BaseSummarizer]:
-    """
-    Dynamically discovers and returns instances of all available summarizers.
-    Prioritizes Ollama if ENABLE_OLLAMA=1.
-    """
     all_classes = BaseSummarizer.__subclasses__()
     summarizers = []
-    
-    # Priority handling: Ollama first if enabled
     if os.environ.get("ENABLE_OLLAMA", "0") == "1":
         ollama_cls = next((c for c in all_classes if c.__name__ == "OllamaSummarizer"), None)
-        if ollama_cls:
-            summarizers.append(ollama_cls())
-    
-    # Then add others (like Gemini)
+        if ollama_cls: summarizers.append(ollama_cls())
     for cls in all_classes:
-        if cls.__name__ == "OllamaSummarizer":
-            continue
+        if cls.__name__ == "OllamaSummarizer": continue
         summarizers.append(cls())
-        
     return summarizers
 
 def traditionalize_text(text: str) -> str:
     try:
         config = os.environ.get("OPENCC_CONFIG", "s2twp.json")
-        result = subprocess.run(["opencc", "-c", config], input=text, text=True, capture_output=True, check=True)
-        return result.stdout
+        res = subprocess.run(["opencc", "-c", config], input=text, text=True, capture_output=True, check=True)
+        return res.stdout
     except Exception as e:
-        print(f"  [OpenCC] 轉換摘要失敗: {e}")
+        logger.warning(f"OpenCC conversion failed error=\"{e}\"", action="traditionalize_error")
         return text
 
 def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | None:
     output_md_path = txt_path.with_name(f"{txt_path.stem}.summary.md")
     template_path = prompt_file if prompt_file and prompt_file.exists() else Path("prompts/default.md")
     
-    if output_md_path.exists():
-        if output_md_path.stat().st_mtime >= txt_path.stat().st_mtime:
-            print(f"摘要已存在且為最新: {output_md_path.name}")
-            return output_md_path
+    if output_md_path.exists() and output_md_path.stat().st_mtime >= txt_path.stat().st_mtime:
+        logger.info(f"Summary already exists and is up-to-date path={output_md_path.name}", action="summarize_skip")
+        return output_md_path
 
-    if not template_path.exists():
-        raise FileNotFoundError(f"Prompt template file not found: {template_path}")
+    if not template_path.exists(): raise FileNotFoundError(f"Prompt template not found: {template_path}")
 
-    print(f"正在摘要: {txt_path.name} ...")
+    logger.info(f"Summarizing file path={txt_path.name}", action="summarize_file")
     transcript_content = txt_path.read_text(encoding="utf-8")
     template = template_path.read_text(encoding="utf-8")
     full_prompt = template.replace("{transcript_content}", transcript_content)
@@ -134,7 +97,6 @@ def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | No
             if summary_text:
                 final_text = traditionalize_text(summary_text)
                 output_md_path.write_text(final_text, encoding="utf-8")
-                print(f"[OK] 摘要完成 ({summarizer.name}): {output_md_path.name}")
+                logger.info(f"Summary completed summarizer={summarizer.name} path={output_md_path.name}", action="summarize_ok")
                 return output_md_path
-
     return None
