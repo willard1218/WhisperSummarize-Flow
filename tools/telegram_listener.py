@@ -325,16 +325,28 @@ class TelegramUpdateHandler:
             if not prompt:
                 self.api_client.send_message(chat_id, "請提供指令。", reply_markup={"force_reply": True, "selective": True})
                 return
-            self.api_client.send_message(chat_id, "正在處理 AI 請求...")
+            self.api_client.send_message(chat_id, "正在處理 AI 請求 (對話模式)...")
             try:
-                cmd = ["/opt/homebrew/bin/gemini", "--yolo", "--prompt", prompt]
-                logger.info(f"Executing AI talk command=\"{' '.join(cmd)}\"", action="ai_talk")
+                # Use --resume latest to maintain conversation context
+                cmd = ["/opt/homebrew/bin/gemini", "--yolo", "--resume", "latest", "--prompt", prompt]
+                logger.info(f"Executing AI talk session=latest command=\"{' '.join(cmd)}\"", action="ai_talk")
                 res = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=str(self.settings.base_dir))
                 output = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', res.stdout.strip() or res.stderr.strip() or "No output")
                 self.api_client.send_message(chat_id, f"AI 回應：\n\n{output}")
             except Exception as e:
                 logger.error(f"AI talk failed error=\"{e}\"", action="ai_talk_error")
                 self.api_client.send_message(chat_id, f"發生錯誤：{e}")
+            return
+
+        if text == "/ai_reset":
+            self.api_client.send_message(chat_id, "正在重置 AI 對話記憶...")
+            try:
+                # Starting a new session by NOT using resume
+                cmd = ["/opt/homebrew/bin/gemini", "--yolo", "--prompt", "Hello! This is a fresh session. Please acknowledge and wait for my instructions."]
+                subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=str(self.settings.base_dir))
+                self.api_client.send_message(chat_id, "✅ 對話記憶已重置，現在可以開始新的討論。")
+            except Exception as e:
+                self.api_client.send_message(chat_id, f"重置失敗：{e}")
             return
 
         media = self.interpreter.extract_media(message)
