@@ -80,9 +80,26 @@ class TelegramApiClient:
         return None
 
     def send_message(self, chat_id: str | int, text: str, reply_markup: dict | None = None) -> dict | None:
-        payload = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
-        if reply_markup: payload["reply_markup"] = reply_markup
-        return self.call_api("sendMessage", payload)
+        """Sends a text message, automatically chunking if it exceeds the Telegram character limit."""
+        max_len = 4000
+        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
+        
+        last_res = None
+        logger.info(f"Outgoing Telegram message chat_id={chat_id} chunks={len(chunks)} body=\"{text[:100]}...\"", action="send_message")
+        
+        for i, chunk in enumerate(chunks):
+            if i > 0:
+                time.sleep(0.5) # Avoid hitting rate limits for multi-chunk messages
+            payload = {"chat_id": chat_id, "text": chunk, "disable_web_page_preview": True}
+            if reply_markup and i == len(chunks) - 1:
+                # Only attach reply_markup to the last chunk
+                payload["reply_markup"] = reply_markup
+            
+            last_res = self.call_api("sendMessage", payload)
+            if not last_res or not last_res.get("ok"):
+                logger.error(f"Failed to send message chunk {i+1}/{len(chunks)}", action="chunk_error")
+                
+        return last_res
 
     def send_document(self, chat_id: str | int, file_path: Path, caption: str | None = None) -> dict | None:
         url = self.settings.api_url + "sendDocument"
@@ -100,7 +117,7 @@ class TelegramApiClient:
         req = urllib.request.Request(url, data=body)
         req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
         
-        logger.info(f"API sending document path={file_path}", action="api_document")
+        logger.info(f"Outgoing Telegram document chat_id={chat_id} path={file_path} caption=\"{caption or ''}\"", action="api_document")
         try:
             with urllib.request.urlopen(req, timeout=60) as response:
                 return json.loads(response.read().decode())
