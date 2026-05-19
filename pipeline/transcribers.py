@@ -4,6 +4,9 @@ import json
 import re
 from pathlib import Path
 from abc import ABC, abstractmethod
+from logger import get_logger
+
+logger = get_logger("transcribers")
 
 class BaseTranscriber(ABC):
     @abstractmethod
@@ -28,7 +31,7 @@ class BaseTranscriber(ABC):
             seconds = int(total_seconds % 60)
             return f"{hours:02}:{minutes:02}:{seconds:02}"
         except Exception as e:
-            print(f"Error getting audio duration: {e}")
+            logger.error(f"Error getting audio duration: {e}", action="duration_error")
             return "00:00:00"
 
 class WhisperCPPTranscriber(BaseTranscriber):
@@ -62,7 +65,7 @@ class WhisperKitTranscriber(BaseTranscriber):
                 should_convert = True
         
         if should_convert:
-            print(f"[FFmpeg] Converting to 16kHz WAV: {audio_path.name}")
+            logger.info(f"Converting to 16kHz WAV: {audio_path.name}", action="ffmpeg_convert")
             subprocess.run([
                 self.ffmpeg_bin, "-y", "-i", str(audio_path),
                 "-ac", "1", "-ar", "16000", str(wav_path)
@@ -84,16 +87,16 @@ class WhisperKitTranscriber(BaseTranscriber):
         report_dir.mkdir(exist_ok=True)
         cmd += ["--report-path", str(report_dir), "--report"]
 
-        print(f"Running WhisperKit: {' '.join(cmd)}")
+        logger.info(f"Running WhisperKit command=\"{' '.join(cmd)}\"", action="transcribe_start")
         
         segments = []
         speaker_pattern = re.compile(r"^SPEAKER\s+\S+\s+\d+\s+(\d+\.\d+)\s+(\d+\.\d+)\s+(.+?)\s+<NA>\s+(\S+)\s+<NA>\s+<NA>")
         
-        # Stream output to console while capturing speaker segments
+        # Capture output but don't stream every line to stdout
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         if process.stdout:
             for line in process.stdout:
-                print(line, end="")
+                # We still need to process lines to build segments for WhisperKitReportWriter
                 match = speaker_pattern.match(line.strip())
                 if match:
                     start = float(match.group(1))
@@ -109,7 +112,9 @@ class WhisperKitTranscriber(BaseTranscriber):
         
         if segments:
             # Successfully captured speaker info from stdout
-            return WhisperKitReportWriter(audio_path).write(segments)
+            result_path = WhisperKitReportWriter(audio_path).write(segments)
+            logger.info(f"Transcription finished segments={len(segments)} output=\"{result_path.name}\"", action="transcribe_ok")
+            return result_path
 
         # Fallback: WhisperKit produces a JSON report. We need to find it and convert it to .srt.txt and .txt
         # Example: reports/<audio_name>/transcription.json or reports/<audio_name>.json
@@ -127,9 +132,11 @@ class WhisperKitTranscriber(BaseTranscriber):
     def _process_report(self, report_json: Path, original_audio: Path) -> Path | None:
         try:
             data = json.loads(report_json.read_text(encoding="utf-8"))
-            return WhisperKitReportWriter(original_audio).write(data.get("segments", []))
+            result_path = WhisperKitReportWriter(original_audio).write(data.get("segments", []))
+            logger.info(f"Transcription report processed path=\"{result_path.name}\"", action="report_ok")
+            return result_path
         except Exception as e:
-            print(f"Error processing WhisperKit report: {e}")
+            logger.error(f"Error processing WhisperKit report: {e}", action="report_error")
             return None
 
 

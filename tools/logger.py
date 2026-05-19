@@ -2,6 +2,7 @@ import logging
 import json
 import sys
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 
 class JsonFormatter(logging.Formatter):
     def format(self, record):
@@ -35,9 +36,10 @@ class KVFormatter(logging.Formatter):
             parts.append(f"exc=\"{self.formatException(record.exc_info).replace('\n', ' ')}\"")
         return " ".join(parts)
 
-def setup_logging(level=logging.INFO, format_type="kv", log_file=None):
+def setup_logging(level=logging.INFO, format_type="kv", log_file=None, max_bytes=10*1024*1024, backup_count=5):
     handlers = [logging.StreamHandler(sys.stdout)]
-    if log_file: handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+    if log_file: 
+        handlers.append(RotatingFileHandler(log_file, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"))
 
     if format_type == "json": formatter = JsonFormatter()
     elif format_type == "kv": formatter = KVFormatter()
