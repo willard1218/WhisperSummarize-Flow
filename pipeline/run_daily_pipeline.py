@@ -10,6 +10,7 @@ import fcntl
 import hashlib
 import concurrent.futures
 import threading
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -99,52 +100,18 @@ class PipelineContext:
         task_logger = self.task_loggers[item_index]
         if level == "error":
             task_logger.error(message)
-        elif level == "warning":
-            task_logger.warning(message)
+            self.overall_ok = False
         else:
             task_logger.info(message)
 
-        if getattr(self.args, "telegram_progress", False):
-            try:
-                send_telegram_msg(f"[{self.items[item_index].label}] {message}")
-            except Exception as e:
-                logger.error(f"Failed to send Telegram status: {e}")
-    
-    def log_item_trace(self, item_index: int, message: str):
-        if 0 <= item_index < len(self.items):
-            self.items[item_index].log_trace(message)
-            self.task_loggers[item_index].debug(f"TRACE: {message}")
-
-    def log_event(self, item_index: int | None, event: str, status: str, seconds: float, detail: str = "") -> None:
-        if item_index is not None:
-            task_logger = self.task_loggers[item_index]
-            msg = f"EVENT {event} status={status} duration={seconds:.2f}s"
-            if detail: msg += f" detail=\"{detail}\""
-            
-            if status == "failed":
-                task_logger.error(msg, action=event)
-            else:
-                task_logger.info(msg, action=event)
-        else:
-            msg = f"PHASE {event} status={status} duration={seconds:.2f}s"
-            if detail: msg += f" detail=\"{detail}\""
-            logger.info(msg)
-
-class BasePipelineStage:
-    """Base class for all pipeline processing stages."""
-    def run(self, context: PipelineContext) -> None:
-        raise NotImplementedError
-
-# --- OCP Downloader Architecture ---
+    def log_event(self, item_index: int, action: str, status: str, duration: float = 0, detail: str = ""):
+        msg = f"EVENT {action} status={status} duration={duration:.2f}s"
+        if detail: msg += f" detail=\"{detail}\""
+        self.task_loggers[item_index].info(msg, action=action)
 
 class BaseDownloader:
-    """Base class for URL-specific download logic."""
-    def can_handle(self, item: DailyItem) -> bool:
-        raise NotImplementedError
-    
-    def download(self, item: DailyItem, context: PipelineContext, item_index: int) -> bool:
-        """Returns True if download succeeded, False otherwise."""
-        raise NotImplementedError
+    def can_handle(self, item: DailyItem) -> bool: raise NotImplementedError
+    def download(self, item: DailyItem, context: PipelineContext, item_index: int) -> bool: raise NotImplementedError
 
 class YouTubeDownloader(BaseDownloader):
     @staticmethod
@@ -254,18 +221,24 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                             context.report_status(item_index, "✅ 下載完成")
                     else:
                         item.failed = True
-                        context.report_status(item_index, "❌ 下載失敗", level="error")
+                        error_msg = f"❌ {item.label} 下載失敗"
+                        context.report_status(item_index, error_msg, level="error")
                         item.messages.append("Download failed")
+                        send_telegram_msg(f"{error_msg} (URL: {item.source_url})")
                 except Exception as e:
                     item.failed = True
-                    context.report_status(item_index, f"❌ 下載錯誤: {e}", level="error")
+                    error_msg = f"❌ {item.label} 下載錯誤: {e}"
+                    context.report_status(item_index, error_msg, level="error")
                     item.messages.append(str(e))
+                    send_telegram_msg(f"{error_msg} (URL: {item.source_url})")
                 break
         
         if not handled and not item.failed:
             item.failed = True
-            context.report_status(item_index, "❌ 錯誤: 找不到支援的下載器", level="error")
+            error_msg = f"❌ {item.label} 錯誤: 找不到支援的下載器"
+            context.report_status(item_index, error_msg, level="error")
             item.messages.append("No downloader found")
+            send_telegram_msg(error_msg)
 
     if item.failed or not item.download_ready:
         return
@@ -293,18 +266,20 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
             with transcribe_lock:
                 context.report_status(item_index, f"🎙️ 開始轉錄 ({args.transcriber_type})")
                 t_start = time.monotonic()
+                
                 item.transcript_path = transcriber.transcribe(item.audio_path, item.output_dir)
                 
-                if item.audio_path and item.audio_path.exists():
-                    item.duration_str = transcriber.get_audio_duration(item.audio_path)
-
                 if item.transcript_path and item.transcript_path.exists(): 
                     context.report_status(item_index, "✅ 轉錄完成")
                     context.log_event(item_index, "transcribe", "ok", time.monotonic()-t_start, item.transcript_path.name)
+                    if item.audio_path and item.audio_path.exists():
+                        item.duration_str = transcriber.get_audio_duration(item.audio_path)
                 else: 
                     item.failed = True
-                    context.report_status(item_index, "❌ 轉錄失敗", level="error")
+                    error_msg = f"❌ {item.label} 轉錄失敗"
+                    context.report_status(item_index, error_msg, level="error")
                     item.messages.append("Transcription failed")
+                    send_telegram_msg(f"{error_msg} (Audio: {item.audio_path.name if item.audio_path else 'unknown'})")
     else:
         if existing and existing.exists():
             item.transcript_path = existing
@@ -317,21 +292,30 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
     if args.enable_traditionalize:
         t_start = time.monotonic()
         conv_script = BASE_DIR / "tools" / "convert_transcript_opencc.py"
-        if item.transcript_path.name.endswith(".srt.txt") and not item.transcript_path.name.endswith(".zh-Hant.srt.txt"):
-            hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
-            if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
-                run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
-        
-        txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
-        if txt_path.exists() and not txt_path.name.endswith(".zh-Hant.txt"):
-            txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
-            if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
-                run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
-        
-        hant_srt = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
-        if hant_srt.exists():
-            item.mail_attachment_path = hant_srt
-        context.log_event(item_index, "traditionalize", "ok", time.monotonic()-t_start)
+        try:
+            if item.transcript_path.name.endswith(".srt.txt") and not item.transcript_path.name.endswith(".zh-Hant.srt.txt"):
+                hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
+                if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
+                    run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
+            
+            txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
+            if txt_path.exists() and not txt_path.name.endswith(".zh-Hant.txt"):
+                txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
+                if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
+                    run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
+            
+            hant_srt = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
+            if hant_srt.exists():
+                item.mail_attachment_path = hant_srt
+            context.log_event(item_index, "traditionalize", "ok", time.monotonic()-t_start)
+        except Exception as e:
+            item.failed = True
+            error_msg = f"❌ {item.label} 繁體化失敗: {e}"
+            context.report_status(item_index, error_msg, level="error")
+            item.messages.append(error_msg)
+            send_telegram_msg(error_msg)
+
+    if item.failed: return
 
     # 4. Summarize
     if args.enable_summarize:
@@ -348,27 +332,38 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                     context.report_status(item_index, "✅ 摘要完成")
                     context.log_event(item_index, "summarize", "ok", time.monotonic()-t_start, summary_path.name)
                 else:
-                    raise RuntimeError("Summary result empty or file not generated")
+                    raise RuntimeError(f"Summary result empty for {item.label}")
             except Exception as e:
                 item.failed = True
-                context.report_status(item_index, f"❌ 摘要失敗: {e}", level="error")
-                item.messages.append(str(e))
+                error_msg = f"❌ {item.label} 摘要失敗: {e}"
+                context.report_status(item_index, error_msg, level="error")
+                item.messages.append(error_msg)
+                send_telegram_msg(error_msg)
+        else:
+            item.failed = True
+            error_msg = f"❌ {item.label} 找不到摘要所需的文字檔"
+            context.report_status(item_index, error_msg, level="error")
+            item.messages.append(error_msg)
+            send_telegram_msg(error_msg)
+
+    if item.failed: return
 
     # 5. Notify
     if not item.mail_attachment_path and item.transcript_path:
         item.mail_attachment_path = item.transcript_path
 
-    if item.failed:
-        error_recipient = os.environ.get("ERROR_REPORT_RECIPIENT")
-        if error_recipient and error_recipient not in item.emails:
-            item.emails.append(error_recipient)
-        if not item.mail_body:
-            item.mail_body = f"任務執行失敗: {item.label}\n錯誤訊息:\n" + "\n".join(item.messages)
-
     notifiers = get_notifiers()
     for notifier in notifiers:
         if notifier.is_enabled(args):
-            notifier.notify([item], args)
+            try:
+                notifier.notify([item], args)
+            except Exception as e:
+                error_msg = f"❌ {item.label} 通知失敗 ({notifier.name}): {e}"
+                context.report_status(item_index, error_msg, level="error")
+                # Don't send Telegram here if it was the Telegram notifier that failed to avoid loops, 
+                # but we'll try sending via send_telegram_msg directly for other errors.
+                if notifier.name != "telegram":
+                    send_telegram_msg(error_msg)
 
 # --- Configuration & Setup ---
 
@@ -408,11 +403,11 @@ def build_items(args, root: Path) -> List[DailyItem]:
     for i, sub in enumerate(load_podcast_subs(pod_cfg), 1):
         rss = sub.get("rss_url", "").strip()
         title = sub.get("podcast_title", "").strip() or (resolve_podcast_title(rss) if rss else "")
-        prompt_file = Path(sub["prompt_file"]) if sub.get("prompt_file") else None
+        prompt_file = BASE_DIR / sub["prompt_file"] if sub.get("prompt_file") else None
         items.append(DailyItem(f"Podcast {i}", "podcast", sub.get("podcast_url", rss), resolve_emails(sub, groups), subscribed_podcast_output_dir(root, title or "podcast"), prompt_file=prompt_file, title=title))
     for i, sub in enumerate(load_youtube_subs(yt_cfg), 1):
         url = sub.get("channel_url", "").strip()
-        prompt_file = Path(sub["prompt_file"]) if sub.get("prompt_file") else None
+        prompt_file = BASE_DIR / sub["prompt_file"] if sub.get("prompt_file") else None
         items.append(DailyItem(f"YouTube {i}" if i > 1 else "YouTube", "youtube", url, resolve_emails(sub, groups), subscribed_youtube_output_dir(root, url), prompt_file=prompt_file))
     return items
 

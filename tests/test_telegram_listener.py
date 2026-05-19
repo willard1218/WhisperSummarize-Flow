@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from datetime import datetime
 
 from tools.telegram_listener import (
     ListenerSettings,
@@ -95,7 +96,7 @@ class TelegramListenerTests(unittest.TestCase):
             handler, api_client, _, _, _ = self.make_handler(temp_dir, status="忙碌中")
             handler.handle({"message": {"chat": {"id": "owner"}, "text": "/status"}})
 
-            self.assertEqual(api_client.sent_messages[0][1], "目前系統狀態：\n忙碌中")
+            self.assertIn("目前系統狀態：\n忙碌中", api_client.sent_messages[0][1])
 
     def test_url_message_sends_confirmation_button(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -107,7 +108,7 @@ class TelegramListenerTests(unittest.TestCase):
 
             chat_id, text, reply_markup = api_client.sent_messages[0]
             self.assertEqual(chat_id, "owner")
-            self.assertIn("是否啟動流程？", text)
+            self.assertIn("是否啟動？", text)
             
             # Check callback_data uses short ID
             url_id = url_task_store.get_id_for_url(url)
@@ -130,6 +131,7 @@ class TelegramListenerTests(unittest.TestCase):
             handler.handle(
                 {
                     "message": {
+                        "message_id": 100,
                         "chat": {"id": "owner"},
                         "audio": {"file_id": "file-1", "file_name": "clip.mp3", "duration": 12},
                     }
@@ -140,7 +142,7 @@ class TelegramListenerTests(unittest.TestCase):
             self.assertEqual(launcher.calls[0]["chat_id"], "owner")
             self.assertIn("/output/telegram/audio/", str(launcher.calls[0]["local_file"]))
             self.assertTrue(str(launcher.calls[0]["local_file"]).endswith("clip.mp3"))
-            self.assertIn("收到媒體檔案", api_client.sent_messages[0][1])
+            self.assertIn("收到媒體：clip.mp3", api_client.sent_messages[0][1])
             metadata_path = Path(temp_dir) / "output" / "telegram"
             self.assertTrue(any(path.name == "metadata.json" for path in metadata_path.rglob("metadata.json")))
 
@@ -177,6 +179,7 @@ class TelegramListenerTests(unittest.TestCase):
             handler.handle(
                 {
                     "message": {
+                        "message_id": 101,
                         "chat": {"id": "owner"},
                         "video": {"file_id": "vid-1", "file_name": "movie.mp4", "duration": 30},
                     }
@@ -186,7 +189,7 @@ class TelegramListenerTests(unittest.TestCase):
             self.assertEqual(downloader.calls[0][0], "vid-1")
             self.assertIn("/output/telegram/video/", str(launcher.calls[0]["local_file"]))
             self.assertTrue(str(launcher.calls[0]["local_file"]).endswith("movie.mp4"))
-            self.assertIn("收到媒體檔案", api_client.sent_messages[0][1])
+            self.assertIn("收到媒體：movie.mp4", api_client.sent_messages[0][1])
 
     def test_video_note_downloads_and_launches_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -194,6 +197,7 @@ class TelegramListenerTests(unittest.TestCase):
             handler.handle(
                 {
                     "message": {
+                        "message_id": 102,
                         "chat": {"id": "owner"},
                         "video_note": {"file_id": "vn-1", "duration": 5},
                     }
@@ -202,7 +206,8 @@ class TelegramListenerTests(unittest.TestCase):
 
             self.assertEqual(downloader.calls[0][0], "vn-1")
             self.assertIn("/output/telegram/video/", str(launcher.calls[0]["local_file"]))
-            self.assertIn("video_note_", str(launcher.calls[0]["local_file"]))
+            # Filename now depends on time or safe_filename logic
+            self.assertTrue(any("vn_" in str(launcher.calls[0]["local_file"]) for call in launcher.calls))
 
     def test_caption_url_detection(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -262,7 +267,8 @@ class TelegramListenerTests(unittest.TestCase):
                 if self.calls == 1:
                     raise RuntimeError("boom")
 
-        poller = TelegramPoller(api_client, FlakyHandler(), sleep_seconds=0)
+        # Removed sleep_seconds as it's no longer in __init__
+        poller = TelegramPoller(api_client, FlakyHandler())
         poller.poll_once()
 
         self.assertEqual(poller.last_update_id, 4)

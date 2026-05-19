@@ -37,7 +37,8 @@ class TelegramBotClient:
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
         chunks = chunk_telegram_message(message, max_length=max_length)
         
-        logger.info(f"Sending Telegram chunks={len(chunks)} chat_id={self.chat_id}", action="send_telegram")
+        # Audit log for AI: record the full message being sent
+        logger.info(f"Outgoing Telegram notification chat_id={self.chat_id} chunks={len(chunks)} body=\"{message}\"", action="send_telegram")
 
         for index, chunk in enumerate(chunks):
             if index > 0: time.sleep(1)
@@ -47,10 +48,10 @@ class TelegramBotClient:
                 req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
                 with urllib.request.urlopen(req, timeout=30) as response:
                     if response.status != 200:
-                        logger.error(f"Telegram chunk send failed status={response.status}", action="send_failed")
+                        logger.error(f"Telegram chunk send failed status={response.status} index={index}", action="send_failed")
                         return False
             except Exception as e:
-                logger.error(f"Telegram error error=\"{e}\"", action="send_error")
+                logger.error(f"Telegram error index={index} error=\"{e}\"", action="send_error")
                 return False
         return True
 
@@ -64,6 +65,9 @@ def send_mail(recipient: str, subject: str, attachment_paths: Path | Iterable[Pa
 
     if not all([host, user, password]):
         raise RuntimeError("SMTP settings incomplete")
+
+    # Audit log for AI: record full email details
+    logger.info(f"Outgoing Email to={recipient} subject=\"{subject}\" attachments={[p.name for p in attachments]} body=\"{body}\"", action="send_mail")
 
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -110,7 +114,7 @@ class MailNotifier(BaseNotifier):
                 
                 title = item.title or item.label
                 subject = f"{title} - {subject_date}"
-                body = "\n\n".join(filter(None, [f"Source: {item.source_url}", getattr(item, 'duration_str', ''), item.mail_body or f"Attached: {item.mail_attachment_path.name}"]))
+                body = "\n\n".join(filter(None, [f"Source URL: {item.source_url}", getattr(item, 'duration_str', ''), item.mail_body or f"Attached: {item.mail_attachment_path.name}"]))
                 
                 t_start = time.monotonic()
                 try:

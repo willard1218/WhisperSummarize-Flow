@@ -40,23 +40,25 @@ def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 def resolve_youtube_latest(channel_url: str) -> dict | None:
     yt_dlp_bin = os.environ.get("YT_DLP_BIN", "yt-dlp")
-    # match_filter might skip valid streams if they are just finished, 
-    # but for daily pipeline it's a good guard.
+    # We fetch the last 5 items to find the most recent one that isn't 'upcoming'.
+    # In flat-playlist mode, 'upcoming' live streams typically have duration=None.
     result = run_command([
-        yt_dlp_bin, "--flat-playlist", "--playlist-end", "1",
-        "--match-filter", "live_status=was_live", "--print-json", channel_url
+        yt_dlp_bin, "--flat-playlist", "--playlist-end", "5",
+        "--print-json", channel_url
     ])
+    
     if result.returncode != 0 or not result.stdout.strip():
-        # Fallback: try without filter if it's a direct channel link and nothing was live
-        result = run_command([
-            yt_dlp_bin, "--flat-playlist", "--playlist-end", "1",
-            "--print-json", channel_url
-        ])
-        if result.returncode != 0 or not result.stdout.strip():
-            return None
+        return None
             
     try:
-        return json.loads(result.stdout.splitlines()[-1])
+        lines = result.stdout.strip().splitlines()
+        for line in lines:
+            entry = json.loads(line)
+            # Upcoming streams or private/unavailable videos often have no duration in flat mode.
+            # Normal videos and finished streams ('was_live') will have a numeric duration.
+            if entry.get("duration") is not None:
+                return entry
+        return None
     except (json.JSONDecodeError, IndexError):
         return None
 

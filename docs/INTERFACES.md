@@ -27,4 +27,8 @@ When adding a new command to the listener:
 2.  **Registration**: Update the global bot command list using the `setMyCommands` API.
     - **API Endpoint**: `https://api.telegram.org/bot<TOKEN>/setMyCommands`
     - **Payload**: `{"commands": [{"command": "name", "description": "desc"}, ...]}`
-3.  **Validation**: Ensure the command works correctly and appears in the Telegram autocomplete menu after an app restart.
+## 6. Error Handling & Strict Policy
+To ensure system stability and transparency:
+1.  **No Silent Fallbacks**: Never implement logic that silently switches to a default configuration or model (e.g., switching AI models or prompt templates) when a preferred choice fails.
+2.  **Immediate Notification**: Critical errors in any pipeline stage (Download, Transcribe, Summarize, Notify) must be logged with technical context and immediately sent to the user via Telegram (`send_telegram_msg`).
+3.  **Path Resolution**: Always resolve relative paths (like prompt templates) against the `BASE_DIR` to ensure they work correctly under all execution environments (e.g., manual, crontab, launchd).

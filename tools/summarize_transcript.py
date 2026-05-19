@@ -10,6 +10,8 @@ from logger import get_logger
 
 logger = get_logger("summarizer")
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+
 class BaseSummarizer:
     def __init__(self, name: str): self.name = name
     def is_available(self) -> bool: raise NotImplementedError
@@ -28,11 +30,9 @@ class GeminiSummarizer(BaseSummarizer):
             res = subprocess.run(["gemini", "ask", "-m", "gemini-3-pro-preview", "請看我輸入的內容並進行摘要"], input=full_prompt, text=True, capture_output=True, check=True)
             return res.stdout
         except subprocess.CalledProcessError as e:
-            logger.warning(f"Gemini Pro failed, falling back to Flash. error=\"{e.stderr.strip()}\"", action="summarize_fallback")
-            try:
-                res = subprocess.run(["gemini", "ask", "--skip-trust", "-m", "gemini-3-flash-preview", "請看我輸入的內容並進行摘要"], input=full_prompt, text=True, capture_output=True, check=True)
-                return res.stdout
-            except Exception: return None
+            error_detail = e.stderr.strip()
+            logger.error(f"Gemini Pro failed error=\"{error_detail}\"", action="summarize_error")
+            raise RuntimeError(f"Gemini Pro 摘要失敗: {error_detail}")
 
 class OllamaSummarizer(BaseSummarizer):
     def __init__(self, model: str = "qwen2.5:7b"):
@@ -78,15 +78,18 @@ def traditionalize_text(text: str) -> str:
 
 def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | None:
     output_md_path = txt_path.with_name(f"{txt_path.stem}.summary.md")
-    template_path = prompt_file if prompt_file and prompt_file.exists() else Path("prompts/default.md")
+    
+    # Strictly use the provided prompt_file or the absolute default. No silent fallback.
+    template_path = prompt_file if prompt_file else BASE_DIR / "prompts" / "default.md"
     
     if output_md_path.exists() and output_md_path.stat().st_mtime >= txt_path.stat().st_mtime:
         logger.info(f"Summary already exists and is up-to-date path={output_md_path.name}", action="summarize_skip")
         return output_md_path
 
-    if not template_path.exists(): raise FileNotFoundError(f"Prompt template not found: {template_path}")
+    if not template_path.exists():
+        raise FileNotFoundError(f"[CRITICAL] Prompt template missing: {template_path}")
 
-    logger.info(f"Summarizing file path={txt_path.name}", action="summarize_file")
+    logger.info(f"Summarizing file path={txt_path.name} template={template_path.name}", action="summarize_file")
     transcript_content = txt_path.read_text(encoding="utf-8")
     template = template_path.read_text(encoding="utf-8")
     full_prompt = template.replace("{transcript_content}", transcript_content)

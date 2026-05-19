@@ -4,9 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
-from pipeline.run_daily_pipeline import DailyItem, YouTubeDownloader, build_items, TranscriptionLock
+from pipeline.run_daily_pipeline import DailyItem, YouTubeDownloader, build_items, TranscriptionLock, PipelineContext
 from pipeline.run_registered_youtube import YouTubeSyncResult
 
 
@@ -89,7 +89,10 @@ class RunDailyPipelineTests(unittest.TestCase):
                 output_dir=output_dir,
             )
 
-            ok = YouTubeDownloader().download(item, SimpleNamespace(args=SimpleNamespace(url=None)))
+            # Updated to provide context and item_index
+            args = SimpleNamespace(url=None)
+            context = PipelineContext(args, [item])
+            ok = YouTubeDownloader().download(item, context, 0)
 
             self.assertTrue(ok)
             self.assertEqual(item.audio_path, existing_audio)
@@ -107,10 +110,10 @@ class RunDailyPipelineTests(unittest.TestCase):
         )
         mock_sync.return_value = YouTubeSyncResult(success=True)
 
-        YouTubeDownloader().download(
-            item,
-            SimpleNamespace(args=SimpleNamespace(url=item.source_url)),
-        )
+        # Updated to provide context and item_index
+        args = SimpleNamespace(url=item.source_url)
+        context = PipelineContext(args, [item])
+        YouTubeDownloader().download(item, context, 0)
 
         # verify use_archive=False was passed to sync_youtube_latest
         self.assertFalse(mock_sync.call_args.kwargs["use_archive"])

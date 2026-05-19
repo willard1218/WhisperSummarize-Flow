@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -272,9 +273,9 @@ def main() -> int:
             return NO_EPISODE_EXIT_CODE
     else:
         # Check for Apple Podcast episode ID (?i=...)
-        apple_id = None
         parsed_url = urllib.parse.urlparse(args.podcast_url)
         query_params = urllib.parse.parse_qs(parsed_url.query)
+        apple_id = query_params.get("i", [None])[0]
         if apple_id:
             resolved_guid = resolve_apple_episode_guid(apple_id)
             item = None

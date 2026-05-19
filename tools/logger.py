@@ -29,7 +29,7 @@ class KVFormatter(logging.Formatter):
         if hasattr(record, "task"): parts.append(f"task=\"{record.task}\"")
         if hasattr(record, "action"): parts.append(f"action=\"{record.action}\"")
         
-        msg = record.getMessage().replace('"', '\\"')
+        msg = record.getMessage().replace('"', '\\"').replace('\n', '\\n')
         parts.append(f"msg=\"{msg}\"")
         if record.exc_info:
             parts.append(f"exc=\"{self.formatException(record.exc_info).replace('\n', ' ')}\"")
