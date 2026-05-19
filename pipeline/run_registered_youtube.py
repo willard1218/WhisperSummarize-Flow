@@ -121,8 +121,6 @@ def sync_youtube_latest(source_url: str, output_dir: Path, use_archive: bool = T
     target_url = result.specific_url or source_url
     
     dl_res = download_youtube_video(target_url, output_dir, archive_file)
-    if dl_res.stdout:
-        print(dl_res.stdout, end="")
     
     if vid:
         result.audio_path = find_youtube_audio(output_dir, vid)

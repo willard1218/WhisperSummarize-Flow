@@ -75,9 +75,6 @@ def sync_podcast_latest(source_url: str, output_dir: Path, run_date: Optional[da
 
     dl_res = download_single_podcast(source_url, output_dir, run_date, downloader_bin)
     
-    if dl_res.stdout:
-        print(dl_res.stdout, end="")
-    
     if dl_res.returncode == NO_EPISODE_EXIT_CODE:
         result.skipped = True
         return result
