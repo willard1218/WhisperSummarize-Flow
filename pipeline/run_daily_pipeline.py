@@ -79,6 +79,7 @@ class DailyItem:
     title: str = ""
     duration_str: str = ""
     processing_time_str: str = ""
+    summarization_time_str: str = ""
     failed: bool = False
     download_ready: bool = False
     messages: list[str] = field(default_factory=list)
@@ -337,9 +338,16 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
             try:
                 summary_path = summarize_file(target_txt, item.prompt_file)
                 if summary_path and summary_path.exists():
+                    duration_secs = time.monotonic() - t_start
                     item.mail_body = summary_path.read_text(encoding="utf-8")
                     context.report_status(item_index, "✅ 摘要完成")
-                    context.log_event(item_index, "summarize", "ok", time.monotonic()-t_start, summary_path.name)
+                    context.log_event(item_index, "summarize", "ok", duration_secs, summary_path.name)
+                    
+                    # Format summarization time as HH:MM:SS
+                    h = int(duration_secs // 3600)
+                    m = int((duration_secs % 3600) // 60)
+                    s = int(duration_secs % 60)
+                    item.summarization_time_str = f"{h:02}:{m:02}:{s:02}"
                 else:
                     raise RuntimeError(f"Summary result empty for {item.label}")
             except Exception as e:

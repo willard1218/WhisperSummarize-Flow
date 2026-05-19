@@ -120,6 +120,8 @@ class MailNotifier(BaseNotifier):
                     body_parts.append(f"Audio duration: {item.duration_str}")
                 if getattr(item, 'processing_time_str', ''):
                     body_parts.append(f"Transcription processing time: {item.processing_time_str}")
+                if getattr(item, 'summarization_time_str', ''):
+                    body_parts.append(f"Summarization processing time: {item.summarization_time_str}")
                 
                 body_parts.append(item.mail_body or f"Attached: {item.mail_attachment_path.name}")
                 body = "\n\n".join(body_parts)

@@ -81,8 +81,10 @@ class NotifierTests(unittest.TestCase):
             # Setup mock item properties
             items[0].duration_str = "00:10:00"
             items[0].processing_time_str = "00:02:00"
+            items[0].summarization_time_str = "00:00:30"
             items[1].duration_str = "00:20:00"
             items[1].processing_time_str = "00:04:00"
+            items[1].summarization_time_str = "00:01:00"
 
             notifier.notify(items, Args())
             
@@ -96,6 +98,7 @@ class NotifierTests(unittest.TestCase):
             self.assertIn("Source URL: http://url1", args1.args[3])
             self.assertIn("Audio duration: 00:10:00", args1.args[3])
             self.assertIn("Transcription processing time: 00:02:00", args1.args[3])
+            self.assertIn("Summarization processing time: 00:00:30", args1.args[3])
             
             # Check second call
             args2 = mock_send.call_args_list[1]
@@ -104,6 +107,7 @@ class NotifierTests(unittest.TestCase):
             self.assertIn("Source URL: http://url2", args2.args[3])
             self.assertIn("Audio duration: 00:20:00", args2.args[3])
             self.assertIn("Transcription processing time: 00:04:00", args2.args[3])
+            self.assertIn("Summarization processing time: 00:01:00", args2.args[3])
             
             # Should have touched marker twice
             self.assertEqual(mock_marker_obj.touch.call_count, 2)
