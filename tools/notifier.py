@@ -114,7 +114,15 @@ class MailNotifier(BaseNotifier):
                 
                 title = item.title or item.label
                 subject = f"{title} - {subject_date}"
-                body = "\n\n".join(filter(None, [f"Source URL: {item.source_url}", getattr(item, 'duration_str', ''), item.mail_body or f"Attached: {item.mail_attachment_path.name}"]))
+                
+                body_parts = [f"Source URL: {item.source_url}"]
+                if getattr(item, 'duration_str', ''):
+                    body_parts.append(f"Audio duration: {item.duration_str}")
+                if getattr(item, 'processing_time_str', ''):
+                    body_parts.append(f"Transcription processing time: {item.processing_time_str}")
+                
+                body_parts.append(item.mail_body or f"Attached: {item.mail_attachment_path.name}")
+                body = "\n\n".join(body_parts)
                 
                 t_start = time.monotonic()
                 try:

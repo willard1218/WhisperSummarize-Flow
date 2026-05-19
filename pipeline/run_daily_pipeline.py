@@ -78,6 +78,7 @@ class DailyItem:
     mail_body: str = ""
     title: str = ""
     duration_str: str = ""
+    processing_time_str: str = ""
     failed: bool = False
     download_ready: bool = False
     messages: list[str] = field(default_factory=list)
@@ -270,8 +271,16 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                 item.transcript_path = transcriber.transcribe(item.audio_path, item.output_dir)
                 
                 if item.transcript_path and item.transcript_path.exists(): 
+                    duration_secs = time.monotonic() - t_start
                     context.report_status(item_index, "✅ 轉錄完成")
-                    context.log_event(item_index, "transcribe", "ok", time.monotonic()-t_start, item.transcript_path.name)
+                    context.log_event(item_index, "transcribe", "ok", duration_secs, item.transcript_path.name)
+                    
+                    # Format processing time as HH:MM:SS
+                    h = int(duration_secs // 3600)
+                    m = int((duration_secs % 3600) // 60)
+                    s = int(duration_secs % 60)
+                    item.processing_time_str = f"{h:02}:{m:02}:{s:02}"
+                    
                     if item.audio_path and item.audio_path.exists():
                         item.duration_str = transcriber.get_audio_duration(item.audio_path)
                 else: 

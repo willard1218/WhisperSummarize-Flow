@@ -78,6 +78,12 @@ class NotifierTests(unittest.TestCase):
             mock_marker_obj.exists.return_value = False
             mock_marker.return_value = mock_marker_obj
             
+            # Setup mock item properties
+            items[0].duration_str = "00:10:00"
+            items[0].processing_time_str = "00:02:00"
+            items[1].duration_str = "00:20:00"
+            items[1].processing_time_str = "00:04:00"
+
             notifier.notify(items, Args())
             
             # Should have called send_mail twice
@@ -88,12 +94,16 @@ class NotifierTests(unittest.TestCase):
             self.assertEqual(args1.args[0], "a@b.com")
             self.assertIn("Item1", args1.args[1])
             self.assertIn("Source URL: http://url1", args1.args[3])
+            self.assertIn("Audio duration: 00:10:00", args1.args[3])
+            self.assertIn("Transcription processing time: 00:02:00", args1.args[3])
             
             # Check second call
             args2 = mock_send.call_args_list[1]
             self.assertEqual(args2.args[0], "a@b.com")
             self.assertIn("Item2", args2.args[1])
             self.assertIn("Source URL: http://url2", args2.args[3])
+            self.assertIn("Audio duration: 00:20:00", args2.args[3])
+            self.assertIn("Transcription processing time: 00:04:00", args2.args[3])
             
             # Should have touched marker twice
             self.assertEqual(mock_marker_obj.touch.call_count, 2)
