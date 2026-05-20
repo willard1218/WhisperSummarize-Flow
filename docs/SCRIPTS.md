@@ -41,7 +41,11 @@ python3 tools/register_youtube_channel.py 'URL' --recipient-group 'GROUP'
 
 ## 其他實用腳本
 
-- `tools/check_daily_status.py`: **即時狀態查詢工具**。快速掃描今日所有頻道（Podcast, YouTube, Telegram）的下載、轉錄、摘要與寄信進度。
+- `tools/health_check.py`: **系統健康檢查工具**。自動驗證 `ffmpeg`, `yt-dlp`, `whisperkit-cli`, `gemini` 等工具是否正確安裝，並檢查 `requirements.txt` 套件與目錄權限。
+- `tools/check_daily_status.py`: **即時狀態查詢工具**。
+  - **視覺化進度條**：使用 `[📂下載] ⮕ [🎙️轉錄] ⮕ [🤖摘要] ⮕ [📧寄出]` 展示任務進度。
+  - **資源統計**：顯示今日與總體的任務筆數與磁碟佔用大小（MB/GB）。
+  - **自動彙整**：自動群組同一個任務的所有關聯檔案，保持輸出精簡。
 - `tools/dump_daily_plan.py`: 預覽當日執行計畫（查看誰會被下載、誰會被通知）。
 - `tools/telegram_listener.py`: **Telegram Bot 互動監聽器**。
   - **URL 啟動**：直接將 YouTube、SoundOn 或 Apple Podcast 網址傳給 Bot。Bot 會先回覆確認按鈕；按下「確認執行」後才會建立任務。具備「長網址自動轉換 ID」機制以符合 Telegram 限制。

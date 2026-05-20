@@ -68,3 +68,10 @@ Telegram 任務資料夾會附帶 `metadata.json`，記錄來源 URL、chat id�
 
 - **摘要快取**: 系統會檢查 `.summary.md` 是否已存在且比原始逐字稿更新，若是則跳過 AI 呼叫，節省配額。
 - **簡繁轉換**: 優先尋找並使用 `.zh-Hant` 繁體檔案，減少重複轉換。
+
+## 監控與日誌 (Logging & Monitoring)
+
+- **AI 友善日誌**: 使用 `tools/logger.py` 實作結構化 KV 日誌，方便 AI Agent 自動分析。
+- **日誌輪轉 (Rotation)**: 採用 `RotatingFileHandler` 限制日誌大小（預設 10MB），避免佔滿磁碟。
+- **主動警報**: 流程中任何階段（下載、轉錄、摘要）發生嚴重錯誤時，系統會立即透過 Telegram (`send_telegram_msg`) 發送通知。
+- **環境檢查**: `tools/health_check.py` 可自動驗證所有外部依賴、Python 套件與權限，作為系統啟動前的第一道防線。
