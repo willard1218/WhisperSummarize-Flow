@@ -11,6 +11,7 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Iterable, List
 from collections import defaultdict
+from datetime import datetime
 
 # Use the centralized logger
 from logger import get_logger
@@ -109,6 +110,7 @@ class MailNotifier(BaseNotifier):
         for item in items:
             if not item.mail_attachment_path or item.failed: continue
             for email in item.emails:
+                digest = hashlib.sha1(email.encode("utf-8")).hexdigest()[:12]
                 marker = marker_path_for(item.mail_attachment_path, email)
                 if marker.exists(): continue
                 
@@ -130,6 +132,12 @@ class MailNotifier(BaseNotifier):
                 try:
                     send_mail(email, subject, item.mail_attachment_path, body)
                     marker.touch()
+                    
+                    # Save a local backup of the sent email
+                    archive_path = item.mail_attachment_path.with_name(f"{item.mail_attachment_path.name}.{digest}.mail.txt")
+                    archive_content = f"Subject: {subject}\nTo: {email}\nDate: {datetime.now().isoformat()}\n\n{body}"
+                    archive_path.write_text(archive_content, encoding="utf-8")
+                    
                     self.log_event("ok", time.monotonic()-t_start, item.label, email)
                 except Exception as e:
                     self.log_event("failed", 0, item.label, f"{email}: {e}")
@@ -158,9 +166,12 @@ class TelegramNotifier(BaseNotifier):
         except Exception as e:
             self.log_event("failed", 0, detail=str(e))
 
+    notifiers = []
 def get_notifiers() -> List[BaseNotifier]:
     notifiers = []
     for cls in BaseNotifier.__subclasses__():
-        try: notifiers.append(cls())
-        except Exception as e: logger.error(f"Failed to load notifier {cls.__name__}: {e}", action="setup_error")
+        try: 
+            notifiers.append(cls())
+        except Exception as e: 
+            logger.error(f"Failed to load notifier {cls.__name__}: {e}", action="setup_error")
     return notifiers
