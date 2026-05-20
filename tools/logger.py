@@ -49,22 +49,46 @@ def setup_logging(level=logging.INFO, format_type="kv", log_file=None, max_bytes
     
     root = logging.getLogger()
     root.setLevel(level)
+    # Remove existing handlers to avoid duplicates
     for h in root.handlers[:]: root.removeHandler(h)
     for h in handlers: root.addHandler(h)
 
-class AIConsumerLogger(logging.LoggerAdapter):
-    """Allows passing context like task and action as keywords."""
+class AIConsumerLogger:
+    """A wrapper for logging.Logger that supports custom keyword arguments like task and action."""
     def __init__(self, logger_instance, extra=None):
-        super().__init__(logger_instance, extra or {})
+        self.logger = logger_instance
+        self.extra = extra or {}
 
-    def process(self, msg, kwargs):
-        # Move known keywords to 'extra'
-        extra = kwargs.get("extra", {}).copy()
+    def _log(self, level, msg, *args, **kwargs):
+        # 1. Prepare 'extra' dict
+        extra = self.extra.copy()
+        if "extra" in kwargs:
+            extra.update(kwargs.pop("extra"))
+            
+        # 2. Extract special keywords
         for key in ["task", "action", "model", "status", "duration"]:
             if key in kwargs:
                 extra[key] = kwargs.pop(key)
-        kwargs["extra"] = extra
-        return msg, kwargs
+        
+        # 3. Call the underlying logger with increased stacklevel
+        # Default stacklevel is 1. Since we have a wrapper (_log) and 
+        # convenience methods (info, etc.), we need stacklevel=3 
+        # to reach the real caller.
+        kwargs.setdefault("stacklevel", 3)
+        self.logger.log(level, msg, *args, extra=extra, **kwargs)
+
+    def debug(self, msg, *args, **kwargs): self._log(logging.DEBUG, msg, *args, **kwargs)
+    def info(self, msg, *args, **kwargs): self._log(logging.INFO, msg, *args, **kwargs)
+    def warning(self, msg, *args, **kwargs): self._log(logging.WARNING, msg, *args, **kwargs)
+    def error(self, msg, *args, **kwargs): self._log(logging.ERROR, msg, *args, **kwargs)
+    def critical(self, msg, *args, **kwargs): self._log(logging.CRITICAL, msg, *args, **kwargs)
+    def exception(self, msg, *args, **kwargs):
+        kwargs["exc_info"] = True
+        # For exception(), we also need stacklevel=3
+        self._log(logging.ERROR, msg, *args, **kwargs)
+
+    def setLevel(self, level): self.logger.setLevel(level)
+    def isEnabledFor(self, level): return self.logger.isEnabledFor(level)
 
 def get_logger(name):
     return AIConsumerLogger(logging.getLogger(name))
