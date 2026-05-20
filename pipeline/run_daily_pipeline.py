@@ -141,6 +141,7 @@ class YouTubeDownloader(BaseDownloader):
             context.log_event(item_index, "download", "ok", time.monotonic()-t_start, detail)
             return True
             
+        context.log_event(item_index, "download", "skipped", time.monotonic()-t_start, "no new video")
         return False
 
 class PodcastDownloader(BaseDownloader):
@@ -161,7 +162,8 @@ class PodcastDownloader(BaseDownloader):
                 return False
             else:
                 context.log_event(item_index, "download", "skipped", time.monotonic()-t_start, "no episode")
-                return True
+                # Return False but don't set item.failed, effectively stopping the lifecycle for this item
+                return False
             
         if res.success:
             item.audio_path = res.audio_path
@@ -222,7 +224,13 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                         if item.download_ready:
                             context.report_status(item_index, "✅ 下載完成")
                     else:
-                        item.failed = True
+                        # If download returned False, check if it was a hard failure or a skip
+                        if not item.failed:
+                            # It was a graceful skip (e.g. no new episode)
+                            handled = True # Mark as handled to avoid "No downloader found"
+                            break # Break downloader loop
+                        
+                        # Hard failure - already marked failed in d.download
                         error_msg = f"❌ {item.label} 下載失敗"
                         context.report_status(item_index, error_msg, level="error")
                         item.messages.append("Download failed")
