@@ -90,7 +90,18 @@ class WhisperKitTranscriber(BaseTranscriber):
         logger.info(f"Running WhisperKit command=\"{' '.join(cmd)}\"", action="transcribe_start")
         
         segments = []
-        speaker_pattern = re.compile(r"^SPEAKER\s+\S+\s+\d+\s+(\d+\.\d+)\s+(\d+\.\d+)\s+(.+?)\s+<NA>\s+(\S+)\s+<NA>\s+<NA>")
+        # Improved regex to handle filenames and text with spaces
+        # Format: SPEAKER [FILENAME] [ID] [START] [DURATION] [TEXT] <NA> [SPEAKER_ID] <NA> <NA>
+        speaker_pattern = re.compile(
+            r"^SPEAKER\s+"          # Start
+            r".+?\s+"               # Filename (non-greedy, skip)
+            r"\d+\s+"               # Stream ID (skip)
+            r"(\d+(?:\.\d+)?)\s+"   # Start time (Group 1)
+            r"(\d+(?:\.\d+)?)\s+"   # Duration (Group 2)
+            r"(.+?)\s+"             # Text content (Group 3)
+            r"<NA>\s+(\S+)\s+"      # Speaker ID (Group 4)
+            r"<NA>\s+<NA>"          # Tail
+        )
         
         # Capture output but don't stream every line to stdout
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)

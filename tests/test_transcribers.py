@@ -76,10 +76,10 @@ class TranscriberTests(unittest.TestCase):
             audio_path.write_text("", encoding="utf-8")
             wav_path.write_text("", encoding="utf-8")
 
-            # Setup mock Popen with diarization lines
+            # Setup mock Popen with diarization lines (including spaces in filename)
             mock_proc = mock_popen.return_value
             mock_proc.stdout = [
-                "SPEAKER clip 1 1.000 2.000 Hello world <NA> A <NA> <NA>\n"
+                "SPEAKER Podcast Title - EP01.wav 1 1.000 2.000 Hello world <NA> A <NA> <NA>\n"
             ]
             mock_proc.wait.return_value = 0
             mock_proc.returncode = 0
