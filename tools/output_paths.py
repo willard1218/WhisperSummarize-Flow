@@ -92,3 +92,20 @@ def write_task_metadata(directory: Path, payload: dict) -> Path:
     metadata_path = directory / "metadata.json"
     metadata_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return metadata_path
+
+
+def update_task_metadata(directory: Path, payload: dict) -> Path:
+    metadata_path = directory / "metadata.json"
+    data = load_task_metadata(directory)
+    data.update(payload)
+    return write_task_metadata(directory, data)
+
+
+def load_task_metadata(directory: Path) -> dict:
+    metadata_path = directory / "metadata.json"
+    if metadata_path.exists():
+        try:
+            return json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}

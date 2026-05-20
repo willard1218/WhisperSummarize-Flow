@@ -30,6 +30,8 @@ from output_paths import (
     telegram_media_output_dir,
     telegram_url_output_dir,
     write_task_metadata,
+    update_task_metadata,
+    load_task_metadata,
     youtube_video_id,
 )
 from run_registered_podcasts import (
@@ -212,6 +214,18 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
     """Processes a single item through all stages of the pipeline."""
     item = context.items[item_index]
     
+    # Load existing metadata if any
+    metadata_path = item.output_dir / "metadata.json"
+    if metadata_path.exists():
+        try:
+            meta = json.loads(metadata_path.read_text(encoding="utf-8"))
+            item.processing_time_str = meta.get("processing_time_str", "")
+            item.summarization_time_str = meta.get("summarization_time_str", "")
+            item.duration_str = meta.get("duration_str", "")
+            if meta.get("title") and not item.title:
+                item.title = meta.get("title")
+        except Exception: pass
+
     # 0. Mock Mode setup
     if args.mock:
         item.output_dir.mkdir(parents=True, exist_ok=True)
@@ -277,6 +291,9 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
         
         if (existing and existing.exists() and not is_stale) or (summary_hant and summary_hant.exists() and not is_stale): 
             item.transcript_path = existing
+            # Try to recover historical processing time from metadata
+            meta = load_task_metadata(item.output_dir)
+            item.processing_time_str = meta.get("processing_time_str", "Cached")
             if item.audio_path and item.audio_path.exists():
                 item.duration_str = transcriber.get_audio_duration(item.audio_path)
             context.report_status(item_index, "⏭️ 轉錄已存在")
@@ -288,6 +305,10 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
             txt_path.write_text("[A] This is a mock transcription for testing purposes.\n", encoding="utf-8")
             item.duration_str = "00:00:05"
             item.processing_time_str = "00:00:01"
+            update_task_metadata(item.output_dir, {
+                "processing_time_str": item.processing_time_str,
+                "duration_str": item.duration_str
+            })
             context.report_status(item_index, "🧪 [MOCK] 轉錄完成")
         else:
             if is_stale:
@@ -312,6 +333,12 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                     
                     if item.audio_path and item.audio_path.exists():
                         item.duration_str = transcriber.get_audio_duration(item.audio_path)
+                    
+                    # Persist all stats to metadata
+                    update_task_metadata(item.output_dir, {
+                        "processing_time_str": item.processing_time_str,
+                        "duration_str": item.duration_str
+                    })
                 else: 
                     item.failed = True
                     error_msg = f"❌ {item.label} 轉錄失敗"
@@ -362,6 +389,11 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
         target_txt = txt_hant if (args.enable_traditionalize and txt_hant.exists()) else (txt_plain if txt_plain.exists() else txt_hant)
         
         if target_txt and target_txt.exists():
+            # Pre-load metadata to recover summarization time if skipped
+            meta = load_task_metadata(item.output_dir)
+            if not item.summarization_time_str:
+                item.summarization_time_str = meta.get("summarization_time_str", "")
+                
             t_start = time.monotonic()
             try:
                 if args.mock:
@@ -374,14 +406,19 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                 if summary_path and summary_path.exists():
                     duration_secs = duration_secs if args.mock else (time.monotonic() - t_start)
                     item.mail_body = summary_path.read_text(encoding="utf-8")
-                    context.report_status(item_index, "✅ 摘要完成" if not args.mock else "🧪 [MOCK] 摘要完成")
-                    context.log_event(item_index, "summarize", "ok", duration_secs, summary_path.name)
                     
-                    # Format summarization time as HH:MM:SS
-                    h = int(duration_secs // 3600)
-                    m = int((duration_secs % 3600) // 60)
-                    s = int(duration_secs % 60)
-                    item.summarization_time_str = f"{h:02}:{m:02}:{s:02}"
+                    # If duration is significant, it means a real summary happened
+                    if duration_secs > 1.0 or not item.summarization_time_str:
+                        h = int(duration_secs // 3600)
+                        m = int((duration_secs % 3600) // 60)
+                        s = int(duration_secs % 60)
+                        item.summarization_time_str = f"{h:02}:{m:02}:{s:02}"
+                        update_task_metadata(item.output_dir, {"summarization_time_str": item.summarization_time_str})
+                        context.report_status(item_index, "✅ 摘要完成" if not args.mock else "🧪 [MOCK] 摘要完成")
+                    else:
+                        context.report_status(item_index, "⏭️ 摘要已存在")
+                        
+                    context.log_event(item_index, "summarize", "ok", duration_secs, summary_path.name)
                 else:
                     raise RuntimeError(f"Summary result empty for {item.label}")
             except Exception as e:
@@ -470,7 +507,7 @@ def write_task_metadata_for_items(items: List[DailyItem], args) -> None:
     for item in items:
         payload = {"task_origin": args.task_origin, "kind": item.kind, "source_url": item.source_url, "created_at": created_at, "chat_id": chat_id, "title": item.title, "label": item.label}
         if item.kind == "youtube": payload["video_id"] = youtube_video_id(item.source_url) or ""
-        write_task_metadata(item.output_dir, payload)
+        update_task_metadata(item.output_dir, payload)
 
 def main() -> int:
     load_local_config()
