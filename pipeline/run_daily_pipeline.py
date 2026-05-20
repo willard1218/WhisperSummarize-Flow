@@ -212,6 +212,17 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
     """Processes a single item through all stages of the pipeline."""
     item = context.items[item_index]
     
+    # 0. Mock Mode setup
+    if args.mock:
+        item.output_dir.mkdir(parents=True, exist_ok=True)
+        if not item.audio_path:
+            item.audio_path = item.output_dir / "mock_audio.wav"
+            if not item.audio_path.exists():
+                item.audio_path.write_text("dummy audio content", encoding="utf-8")
+        item.download_ready = True
+        item.title = item.title or f"Mock Task {item_index}"
+        context.report_status(item_index, "🧪 [MOCK] 下載完成")
+
     # 1. Download
     if not item.download_ready:
         downloaders = [cls() for cls in BaseDownloader.__subclasses__()]
@@ -269,6 +280,15 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
             if item.audio_path and item.audio_path.exists():
                 item.duration_str = transcriber.get_audio_duration(item.audio_path)
             context.report_status(item_index, "⏭️ 轉錄已存在")
+        elif args.mock:
+            # Mock transcription
+            item.transcript_path = item.output_dir / f"{item.audio_path.stem}.srt.txt"
+            item.transcript_path.write_text("1\n00:00:00,000 --> 00:00:05,000\n[A] This is a mock transcription for testing purposes.\n", encoding="utf-8")
+            txt_path = item.transcript_path.with_name(f"{item.transcript_path.stem.replace('.srt', '')}.txt")
+            txt_path.write_text("[A] This is a mock transcription for testing purposes.\n", encoding="utf-8")
+            item.duration_str = "00:00:05"
+            item.processing_time_str = "00:00:01"
+            context.report_status(item_index, "🧪 [MOCK] 轉錄完成")
         else:
             if is_stale:
                 context.report_status(item_index, "🔄 偵測到音檔更新，重新轉錄")
@@ -344,11 +364,17 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
         if target_txt and target_txt.exists():
             t_start = time.monotonic()
             try:
-                summary_path = summarize_file(target_txt, item.prompt_file)
+                if args.mock:
+                    summary_path = target_txt.with_name(f"{target_txt.stem}.summary.md")
+                    summary_path.write_text("# [MOCK] Summary\n- This is a mock summary for rapid testing.", encoding="utf-8")
+                    duration_secs = 0.5
+                else:
+                    summary_path = summarize_file(target_txt, item.prompt_file)
+                
                 if summary_path and summary_path.exists():
-                    duration_secs = time.monotonic() - t_start
+                    duration_secs = duration_secs if args.mock else (time.monotonic() - t_start)
                     item.mail_body = summary_path.read_text(encoding="utf-8")
-                    context.report_status(item_index, "✅ 摘要完成")
+                    context.report_status(item_index, "✅ 摘要完成" if not args.mock else "🧪 [MOCK] 摘要完成")
                     context.log_event(item_index, "summarize", "ok", duration_secs, summary_path.name)
                     
                     # Format summarization time as HH:MM:SS
@@ -461,6 +487,7 @@ def main() -> int:
     parser.add_argument("--traditionalize-transcript", dest="enable_traditionalize", action="store_true", default=os.environ.get("ENABLE_TRADITIONALIZE", "1") == "1")
     parser.add_argument("--opencc-config", default=os.environ.get("OPENCC_CONFIG", "s2twp.json"))
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--mock", action="store_true", help="Run the pipeline with dummy files for rapid testing")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--enable-transcribe", type=int, default=int(os.environ.get("ENABLE_TRANSCRIBE", "1")))
     parser.add_argument("--enable-summarize", type=int, default=int(os.environ.get("ENABLE_SUMMARIZE", "1")))
