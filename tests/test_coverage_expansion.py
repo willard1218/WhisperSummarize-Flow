@@ -43,7 +43,8 @@ class TestCoverageExpansion(unittest.TestCase):
     # 2. OpenCC Failure Handling (Strict Policy)
     @patch("pipeline.run_daily_pipeline.run_command")
     @patch("pipeline.run_daily_pipeline.send_telegram_msg")
-    def test_traditionalize_failure_reports_to_telegram(self, mock_send_tg, mock_run):
+    @patch("pipeline.run_daily_pipeline.trigger_auto_fix")
+    def test_traditionalize_failure_reports_to_telegram(self, mock_trigger, mock_send_tg, mock_run):
         """Verify that OpenCC failure triggers a Telegram alert (Strict Policy)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -86,6 +87,8 @@ class TestCoverageExpansion(unittest.TestCase):
             self.assertTrue(any("繁體化失敗" in msg for msg in item.messages))
             mock_send_tg.assert_called()
             self.assertIn("繁體化失敗", mock_send_tg.call_args[0][0])
+            # Ensure auto-fixer was triggered
+            mock_trigger.assert_called_once()
 
     # 3. YouTube Upcoming Stream Filtering
     @patch("pipeline.run_registered_youtube.run_command")
