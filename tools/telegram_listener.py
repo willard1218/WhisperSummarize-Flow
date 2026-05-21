@@ -328,7 +328,7 @@ class TelegramUpdateHandler:
             self.api_client.send_message(chat_id, "正在處理 AI 請求 (對話模式)...")
             try:
                 # Use --resume latest to maintain conversation context
-                cmd = ["/opt/homebrew/bin/gemini", "--yolo", "--resume", "latest", "--prompt", prompt]
+                cmd = ["/opt/homebrew/bin/gemini", "--yolo", "--skip-trust", "--resume", "latest", "--prompt", prompt]
                 logger.info(f"Executing AI talk session=latest command=\"{' '.join(cmd)}\"", action="ai_talk")
                 res = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=str(self.settings.base_dir))
                 output = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', res.stdout.strip() or res.stderr.strip() or "No output")
@@ -342,7 +342,7 @@ class TelegramUpdateHandler:
             self.api_client.send_message(chat_id, "正在重置 AI 對話記憶...")
             try:
                 # Starting a new session by NOT using resume
-                cmd = ["/opt/homebrew/bin/gemini", "--yolo", "--prompt", "Hello! This is a fresh session. Please acknowledge and wait for my instructions."]
+                cmd = ["/opt/homebrew/bin/gemini", "--yolo", "--skip-trust", "--prompt", "Hello! This is a fresh session. Please acknowledge and wait for my instructions."]
                 subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=str(self.settings.base_dir))
                 self.api_client.send_message(chat_id, "✅ 對話記憶已重置，現在可以開始新的討論。")
             except Exception as e:

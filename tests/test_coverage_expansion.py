@@ -67,7 +67,8 @@ class TestCoverageExpansion(unittest.TestCase):
                 enable_transcribe=True,
                 enable_summarize=False,
                 enable_mail=False,
-                enable_telegram=True
+                enable_telegram=True,
+                mock=False
             )
             context = PipelineContext(args, [item])
             

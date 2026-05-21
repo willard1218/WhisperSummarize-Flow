@@ -32,3 +32,4 @@ To ensure system stability and transparency:
 1.  **No Silent Fallbacks**: Never implement logic that silently switches to a default configuration or model (e.g., switching AI models or prompt templates) when a preferred choice fails.
 2.  **Immediate Notification**: Critical errors in any pipeline stage (Download, Transcribe, Summarize, Notify) must be logged with technical context and immediately sent to the user via Telegram (`send_telegram_msg`).
 3.  **Path Resolution**: Always resolve relative paths (like prompt templates) against the `BASE_DIR` to ensure they work correctly under all execution environments (e.g., manual, crontab, launchd).
+4.  **Gemini CLI Trust**: When calling the Gemini CLI in automated or non-interactive environments, always include the `--skip-trust` flag or set the `GEMINI_CLI_TRUST_WORKSPACE=true` environment variable to prevent "not running in a trusted directory" errors.

@@ -49,6 +49,24 @@ class OutputPathTests(unittest.TestCase):
         self.assertIn("/telegram/audio/", str(audio_dir))
         self.assertIn("/telegram/video/", str(video_dir))
 
+    def test_metadata_write_and_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir)
+            from tools.output_paths import write_task_metadata, update_task_metadata
+            
+            # Initial write
+            write_task_metadata(path, {"a": 1, "b": 2})
+            meta_file = path / "metadata.json"
+            self.assertTrue(meta_file.exists())
+            
+            # Update
+            update_task_metadata(path, {"b": 3, "c": 4})
+            import json
+            data = json.loads(meta_file.read_text())
+            self.assertEqual(data["a"], 1)
+            self.assertEqual(data["b"], 3)
+            self.assertEqual(data["c"], 4)
+
 
 if __name__ == "__main__":
     unittest.main()

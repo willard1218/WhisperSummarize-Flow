@@ -25,14 +25,20 @@ class GeminiSummarizer(BaseSummarizer):
             return True
         except: return False
     def summarize(self, full_prompt: str) -> Optional[str]:
-        try:
-            logger.info("Attempting Gemini Pro summary", action="summarize_start", model="gemini-3-pro-preview")
-            res = subprocess.run(["gemini", "ask", "-m", "gemini-3-pro-preview", "請看我輸入的內容並進行摘要"], input=full_prompt, text=True, capture_output=True, check=True)
-            return res.stdout
-        except subprocess.CalledProcessError as e:
-            error_detail = e.stderr.strip()
-            logger.error(f"Gemini Pro failed error=\"{error_detail}\"", action="summarize_error")
-            raise RuntimeError(f"Gemini Pro 摘要失敗: {error_detail}")
+        models = ["gemini-3-pro-preview", "gemini-3-flash-preview"]
+        for model in models:
+            try:
+                logger.info(f"Attempting Gemini summary model={model}", action="summarize_start")
+                res = subprocess.run(["gemini", "ask", "--skip-trust", "-m", model, "請看我輸入的內容並進行摘要"], input=full_prompt, text=True, capture_output=True, check=True)
+                return res.stdout
+            except subprocess.CalledProcessError as e:
+                error_detail = e.stderr.strip()
+                if model != models[-1] and ("429" in error_detail or "RESOURCE_EXHAUSTED" in error_detail or "capacity" in error_detail.lower()):
+                    logger.warning(f"Gemini {model} failed (quota/capacity), falling back... error=\"{error_detail}\"", action="summarize_fallback")
+                    continue
+                logger.error(f"Gemini {model} failed error=\"{error_detail}\"", action="summarize_error")
+                raise RuntimeError(f"Gemini {model} 摘要失敗: {error_detail}")
+        return None
 
 class OllamaSummarizer(BaseSummarizer):
     def __init__(self, model: str = "qwen2.5:7b"):

@@ -88,5 +88,18 @@ class TestRobustness(unittest.TestCase):
         title = get_task_title("../../../etc/passwd.mp3")
         self.assertEqual(title, "../../../etc/passwd")
 
+    # 5. GeminiSummarizer Trust Flag
+    @patch("tools.summarize_transcript.subprocess.run")
+    def test_gemini_summarizer_uses_skip_trust(self, mock_run):
+        from tools.summarize_transcript import GeminiSummarizer
+        mock_run.return_value = MagicMock(stdout="Summary result", returncode=0)
+        
+        summarizer = GeminiSummarizer()
+        summarizer.summarize("test prompt")
+        
+        # Check if the first call to gemini ask had --skip-trust
+        args = mock_run.call_args.args[0]
+        self.assertIn("--skip-trust", args)
+
 if __name__ == "__main__":
     unittest.main()
