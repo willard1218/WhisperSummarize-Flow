@@ -91,7 +91,7 @@ fi
   echo "Using Python: $PYTHON_BIN"
   overall_status=0
   set +e
-  pipeline_output="$("$PYTHON_BIN" "$DAILY_RUNNER" --date "$RUN_DATE" --output-root "$OUTPUT_DIR" --transcribe-script "$TRANSCRIBE_SCRIPT" --podcast-config "$PODCAST_CONFIG_FILE" --youtube-config "$YOUTUBE_CONFIG_FILE" --recipient-config "$RECIPIENT_CONFIG_FILE" 2>&1)"
+  pipeline_output="$("$PYTHON_BIN" "$DAILY_RUNNER" --date "$RUN_DATE" --output-root "$OUTPUT_DIR" --log-file "$LOG_FILE" --transcribe-script "$TRANSCRIBE_SCRIPT" --podcast-config "$PODCAST_CONFIG_FILE" --youtube-config "$YOUTUBE_CONFIG_FILE" --recipient-config "$RECIPIENT_CONFIG_FILE" 2>&1)"
   pipeline_status=$?
   set -e
   printf '%s\n' "$pipeline_output"

@@ -15,15 +15,20 @@ from local_config import load_local_config
 
 def check_binary(name: str, env_var: str = None) -> Tuple[bool, str]:
     """Checks if a binary is available in PATH or via environment variable."""
-    path = os.environ.get(env_var) if env_var else shutil.which(name)
+    path = None
+    if env_var:
+        path = os.environ.get(env_var)
+    
+    if not path:
+        path = shutil.which(name)
+        
     if not path:
         return False, f"Binary '{name}' not found in PATH."
     
-    # If it's an env var, verify it's executable or exists
-    if env_var and os.environ.get(env_var):
-        actual_path = shutil.which(os.environ[env_var]) or os.environ[env_var]
-        if not os.path.exists(actual_path):
-            return False, f"Path from {env_var} ('{actual_path}') does not exist."
+    # If it's a specific path (either from env or which), verify it's executable or exists
+    # shutil.which already returns absolute path or None
+    if not os.path.exists(path) and not shutil.which(path):
+        return False, f"Binary '{name}' path ('{path}') does not exist or is not executable."
     
     return True, f"Found at: {path}"
 
@@ -94,6 +99,7 @@ def run_health_check():
             check_binary("ffprobe", "FFPROBE_BIN"),
             check_binary("yt-dlp", "YT_DLP_BIN"),
             check_binary("whisperkit-cli", "WHISPERKIT_BIN"),
+            check_binary("opencc", "OPENCC_BIN"),
             check_binary("gemini")
         ],
         "Configuration Files": [

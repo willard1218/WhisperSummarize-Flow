@@ -35,3 +35,13 @@
 - **Re-run Today's Pipeline**: `venv/bin/python3 pipeline/run_daily_pipeline.py --date $(date +%Y-%m-%d)`
 - **Check Progress**: `venv/bin/python3 tools/check_daily_status.py`
 - **Force Re-summarize**: `rm output/path/to/*.summary.md && venv/bin/python3 pipeline/run_daily_pipeline.py --url [URL]`
+
+## Autonomous Self-Healing (Auto-Fixer)
+The project includes a self-healing mechanism to autonomously resolve pipeline failures:
+- **Trigger**: When a task fails in `run_daily_pipeline.py`, it automatically launches `tools/auto_fixer.py` in the background.
+- **Workflow**:
+    1. Gathers context: `README.md`, `GEMINI.md`, and relevant task logs.
+    2. Invokes Gemini AI: Runs `gemini --yolo --skip-trust` with a high-level repair prompt.
+    3. AI performs repairs: Modifies code, configs, or environments directly.
+    4. Reports result: Sends a Telegram message with [Root Cause], [Solution], and [Status].
+- **AI Agent Responsibility**: When acting as the auto-fixer, prioritize stability and follow all rules in `GEMINI.md`. Always provide a clear report upon completion.

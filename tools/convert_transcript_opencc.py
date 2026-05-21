@@ -2,6 +2,7 @@
 
 import argparse
 import subprocess
+import os
 import sys
 from pathlib import Path
 
@@ -36,15 +37,20 @@ def main() -> int:
     output_path = Path(args.output_path).expanduser().resolve() if args.output_path else translated_path_for(input_path)
 
     logger.info(f"Converting file path={input_path.name}", action="convert_start")
-    res = subprocess.run(["opencc", "-i", str(input_path), "-o", str(output_path), "-c", args.config])
     
-    if res.returncode == 0:
-        logger.info(f"Conversion ok path={output_path.name}", action="convert_ok")
-        print(output_path)
-        return 0
-    
-    logger.error(f"OpenCC failed status={res.returncode}", action="convert_error")
-    return res.returncode
+    opencc_bin = os.environ.get("OPENCC_BIN", "opencc")
+    try:
+        res = subprocess.run([opencc_bin, "-i", str(input_path), "-o", str(output_path), "-c", args.config])
+        if res.returncode == 0:
+            logger.info(f"Conversion ok path={output_path.name}", action="convert_ok")
+            print(output_path)
+            return 0
+        else:
+            logger.error(f"OpenCC failed status={res.returncode}", action="convert_error")
+            return res.returncode
+    except FileNotFoundError:
+        logger.error(f"OpenCC command not found: {opencc_bin}", action="convert_fail")
+        raise RuntimeError(f"OpenCC command not found: {opencc_bin}")
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -259,13 +259,17 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                         error_msg = f"❌ {item.label} 下載失敗"
                         context.report_status(item_index, error_msg, level="error")
                         item.messages.append("Download failed")
-                        send_telegram_msg(f"{error_msg} (URL: {item.source_url})")
+                        tg_msg = f"{error_msg} (URL: {item.source_url})"
+                        send_telegram_msg(tg_msg)
+                        trigger_auto_fix(item.label, tg_msg, args.log_file)
                 except Exception as e:
                     item.failed = True
                     error_msg = f"❌ {item.label} 下載錯誤: {e}"
                     context.report_status(item_index, error_msg, level="error")
                     item.messages.append(str(e))
-                    send_telegram_msg(f"{error_msg} (URL: {item.source_url})")
+                    tg_msg = f"{error_msg} (URL: {item.source_url})"
+                    send_telegram_msg(tg_msg)
+                    trigger_auto_fix(item.label, tg_msg, args.log_file)
                 break
         
         if not handled and not item.failed:
@@ -344,7 +348,9 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                     error_msg = f"❌ {item.label} 轉錄失敗"
                     context.report_status(item_index, error_msg, level="error")
                     item.messages.append("Transcription failed")
-                    send_telegram_msg(f"{error_msg} (Audio: {item.audio_path.name if item.audio_path else 'unknown'})")
+                    tg_msg = f"{error_msg} (Audio: {item.audio_path.name if item.audio_path else 'unknown'})"
+                    send_telegram_msg(tg_msg)
+                    trigger_auto_fix(item.label, tg_msg, args.log_file)
     else:
         if existing and existing.exists():
             item.transcript_path = existing
@@ -379,6 +385,7 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
             context.report_status(item_index, error_msg, level="error")
             item.messages.append(error_msg)
             send_telegram_msg(error_msg)
+            trigger_auto_fix(item.label, error_msg, args.log_file)
 
     if item.failed: return
 
@@ -427,12 +434,14 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                 context.report_status(item_index, error_msg, level="error")
                 item.messages.append(error_msg)
                 send_telegram_msg(error_msg)
+                trigger_auto_fix(item.label, error_msg, args.log_file)
         else:
             item.failed = True
             error_msg = f"❌ {item.label} 找不到摘要所需的文字檔"
             context.report_status(item_index, error_msg, level="error")
             item.messages.append(error_msg)
             send_telegram_msg(error_msg)
+            trigger_auto_fix(item.label, error_msg, args.log_file)
 
     if item.failed: return
 
@@ -452,6 +461,23 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                 # but we'll try sending via send_telegram_msg directly for other errors.
                 if notifier.name != "telegram":
                     send_telegram_msg(error_msg)
+
+def trigger_auto_fix(item_label: str, error_msg: str, log_file: str = None):
+    """Triggers the autonomous auto-fixer in the background."""
+    try:
+        fixer_script = BASE_DIR / "tools" / "auto_fixer.py"
+        if not fixer_script.exists():
+            return
+            
+        cmd = [sys.executable, str(fixer_script), "--task", item_label, "--error", error_msg]
+        if log_file:
+            cmd += ["--log", log_file]
+        
+        # Launch in background to not stall the rest of the pipeline
+        subprocess.Popen(cmd)
+        logger.info(f"Auto-fixer triggered for {item_label}", action="fix_trigger")
+    except Exception as e:
+        logger.error(f"Failed to trigger auto-fixer: {e}", action="fix_trigger_error")
 
 # --- Configuration & Setup ---
 
@@ -517,6 +543,7 @@ def main() -> int:
     parser.add_argument("--recipient-group", default="all", help="Recipient group for ad-hoc task")
     parser.add_argument("--date", dest="run_date", type=parse_run_date, default=date.today())
     parser.add_argument("--output-root", default="output")
+    parser.add_argument("--log-file", help="Path to the log file being used (for auto-fixer)")
     parser.add_argument("--transcribe-script", default=os.environ.get("GENSRT_SCRIPT", str(BASE_DIR / "gensrt.sh")))
     parser.add_argument("--podcast-config", default="config/subscriptions.json")
     parser.add_argument("--youtube-config", default="config/youtube_subscriptions.json")

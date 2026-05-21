@@ -6,6 +6,7 @@
 # GENSRT_SCRIPT="/path/to/gensrt.sh"
 # PYTHON_BIN="/usr/bin/python3"
 # FFMPEG_BIN_DIR="/opt/homebrew/bin"
+# OPENCC_BIN="/opt/homebrew/bin/opencc"
 # Pipeline Stage Toggles (1 to enable, 0 to disable)
 ENABLE_TRANSCRIBE="1"
 ENABLE_TRADITIONALIZE="1"  # Simplified Chinese to Traditional Chinese (OpenCC)

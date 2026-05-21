@@ -68,7 +68,8 @@ class TestCoverageExpansion(unittest.TestCase):
                 enable_summarize=False,
                 enable_mail=False,
                 enable_telegram=True,
-                mock=False
+                mock=False,
+                log_file=None
             )
             context = PipelineContext(args, [item])
             
@@ -141,6 +142,25 @@ class TestCoverageExpansion(unittest.TestCase):
         self.assertIn("[📂下載]", output)
         self.assertIn("[🎙️轉錄]", output)
         self.assertIn("[  摘要  ]", output)
+
+    # 6. Auto-Fixer Trigger
+    @patch("pipeline.run_daily_pipeline.subprocess.Popen")
+    def test_trigger_auto_fix_calls_script(self, mock_popen):
+        from pipeline.run_daily_pipeline import trigger_auto_fix, BASE_DIR
+        import sys
+        
+        trigger_auto_fix("TestTask", "Some Error", "path/to.log")
+        
+        # Verify it attempted to launch auto_fixer.py
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args.args[0]
+        self.assertIn(str(BASE_DIR / "tools" / "auto_fixer.py"), cmd)
+        self.assertIn("--task", cmd)
+        self.assertIn("TestTask", cmd)
+        self.assertIn("--error", cmd)
+        self.assertIn("Some Error", cmd)
+        self.assertIn("--log", cmd)
+        self.assertIn("path/to.log", cmd)
 
 if __name__ == "__main__":
     unittest.main()

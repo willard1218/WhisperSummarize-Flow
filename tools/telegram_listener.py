@@ -217,6 +217,7 @@ class PipelineLauncher:
             "--telegram-progress",
             "--telegram-chat-id", str(chat_id),
             "--task-origin", "telegram",
+            "--log-file", str(self.base_dir / "logs" / "telegram_listener.log"),
         ]
         if url: command += ["--url", url]
         elif local_file: command += ["--local-file", str(local_file)]
