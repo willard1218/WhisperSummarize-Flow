@@ -30,7 +30,7 @@
 - `output/telegram/apple_podcast/<podcast_id>/`
 - `output/telegram/soundon_podcast/<episode_uuid>/`
 
-每個任務資料夾內會集中保存音檔、逐字稿、摘要與寄送標記；Telegram 任務另外會建立 `metadata.json` 方便追蹤來源。
+每個任務資料夾內會集中保存音檔、逐字稿、摘要與寄送標記（包含 `.mail.txt` 主旨備份與 `.mail.srt` 附件備份）；Telegram 任務另外會建立 `metadata.json` 方便追蹤來源。
 
 ## 詳細文件 (Documentation)
 

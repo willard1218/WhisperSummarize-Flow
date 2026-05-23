@@ -2,6 +2,7 @@ import subprocess
 import os
 import json
 import urllib.request
+import shutil
 from pathlib import Path
 from typing import List, Optional
 
@@ -11,6 +12,16 @@ from logger import get_logger
 logger = get_logger("summarizer")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+def resolve_opencc_bin() -> str:
+    """Resolve the opencc binary path with fallbacks."""
+    env_bin = os.environ.get("OPENCC_BIN")
+    if env_bin: return env_bin
+    path_bin = shutil.which("opencc")
+    if path_bin: return path_bin
+    for p in ["/opt/homebrew/bin/opencc", "/usr/local/bin/opencc", "/usr/bin/opencc"]:
+        if os.path.exists(p) and os.access(p, os.X_OK): return p
+    return "opencc"
 
 class BaseSummarizer:
     def __init__(self, name: str): self.name = name
@@ -74,13 +85,23 @@ def get_summarizers() -> List[BaseSummarizer]:
     return summarizers
 
 def traditionalize_text(text: str) -> str:
+    config = os.environ.get("OPENCC_CONFIG", "s2twp.json")
     try:
-        config = os.environ.get("OPENCC_CONFIG", "s2twp.json")
-        res = subprocess.run(["opencc", "-c", config], input=text, text=True, capture_output=True, check=True)
+        opencc_bin = resolve_opencc_bin()
+        res = subprocess.run([opencc_bin, "-c", config], input=text, text=True, capture_output=True, check=True)
         return res.stdout
-    except Exception as e:
-        logger.warning(f"OpenCC conversion failed error=\"{e}\"", action="traditionalize_error")
-        return text
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        logger.info("OpenCC binary failed or not found, falling back to python implementation", action="traditionalize_fallback")
+        try:
+            from opencc import OpenCC
+            config_name = config
+            if config_name.endswith(".json"):
+                config_name = config_name[:-5]
+            converter = OpenCC(config_name)
+            return converter.convert(text)
+        except Exception as fe:
+            logger.warning(f"OpenCC conversion (including fallback) failed error=\"{fe}\"", action="traditionalize_error")
+            return text
 
 def summarize_file(txt_path: Path, prompt_file: Path | None = None) -> Path | None:
     output_md_path = txt_path.with_name(f"{txt_path.stem}.summary.md")

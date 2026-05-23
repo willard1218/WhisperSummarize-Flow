@@ -154,6 +154,9 @@ class WhisperKitTranscriber(BaseTranscriber):
 class WhisperKitReportWriter:
     def __init__(self, original_audio: Path):
         self.original_audio = original_audio
+        self.max_chars = 30      # Max characters per SRT line
+        self.max_duration = 5.0  # Max duration (seconds) per SRT line
+        self.gap_threshold = 1.0 # Max gap (seconds) before splitting
 
     @staticmethod
     def format_time(seconds_value: float) -> str:
@@ -163,21 +166,21 @@ class WhisperKitReportWriter:
         millis = int((seconds_value - int(seconds_value)) * 1000)
         return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
 
-    @staticmethod
-    def render_line(segment: dict) -> str:
-        text = segment.get("text", "").strip()
-        speaker = segment.get("speaker")
-        return f"[{speaker}] {text}" if speaker else text
-
     def write(self, segments: list[dict]) -> Path:
         srt_path = self.original_audio.with_suffix(".srt.txt")
         txt_path = self.original_audio.with_suffix(".txt")
 
+        # 1. Flatten into sub-segments based on words, speaker changes and gaps
+        processed_entries = self._resegment(segments)
+
         with open(srt_path, "w", encoding="utf-8") as srt_handle, open(txt_path, "w", encoding="utf-8") as txt_handle:
-            for index, segment in enumerate(segments, 1):
-                start = segment.get("start", 0)
-                end = segment.get("end", 0)
-                line_text = self.render_line(segment)
+            for index, entry in enumerate(processed_entries, 1):
+                start = entry["start"]
+                end = entry["end"]
+                text = entry["text"]
+                speaker = entry.get("speaker")
+                
+                line_text = f"[{speaker}] {text}" if speaker else text
 
                 srt_handle.write(f"{index}\n")
                 srt_handle.write(f"{self.format_time(start)} --> {self.format_time(end)}\n")
@@ -185,3 +188,98 @@ class WhisperKitReportWriter:
                 txt_handle.write(f"{line_text}\n")
 
         return srt_path
+
+    def _resegment(self, segments: list[dict]) -> list[dict]:
+        entries = []
+        
+        for seg in segments:
+            speaker = seg.get("speaker")
+            words = seg.get("words", [])
+            
+            if not words:
+                entries.extend(self._split_text_segment(seg))
+                continue
+
+            current_words = []
+            chunk_start = words[0].get("start", 0)
+            
+            for i, w in enumerate(words):
+                w_start = w.get("start", 0)
+                w_end = w.get("end", 0)
+                w_text = w.get("word", "").strip()
+                if not w_text: continue
+                
+                # Always add current word first (to ensure no orphan if we split)
+                current_words.append({"text": w_text, "end": w_end, "start": w_start})
+                
+                # Check split conditions AFTER adding the word
+                should_split = False
+                current_len = sum(len(x["text"]) for x in current_words)
+                current_duration = w_end - chunk_start
+                
+                # Rule 1: Gap to NEXT word > 0.8s
+                if i + 1 < len(words):
+                    next_w = words[i+1]
+                    if next_w.get("start", 0) - w_end >= 0.8:
+                        should_split = True
+                
+                # Rule 2: Punctuation split (if long enough)
+                if not should_split and current_len >= 15:
+                    if any(p in w_text for p in "。！？，,"):
+                        should_split = True
+                        
+                # Rule 3: Max length/duration safety net
+                if not should_split:
+                    if current_len >= self.max_chars or current_duration >= self.max_duration:
+                        should_split = True
+
+                if should_split:
+                    entries.append({
+                        "start": chunk_start,
+                        "end": w_end,
+                        "text": "".join(x["text"] for x in current_words).replace("  ", " ").strip(),
+                        "speaker": speaker
+                    })
+                    current_words = []
+                    if i + 1 < len(words):
+                        chunk_start = words[i+1].get("start", 0)
+
+            # Final flush
+            if current_words:
+                entries.append({
+                    "start": chunk_start,
+                    "end": current_words[-1]["end"],
+                    "text": "".join(x["text"] for x in current_words).replace("  ", " ").strip(),
+                    "speaker": speaker
+                })
+
+        return entries
+
+    def _split_text_segment(self, seg: dict) -> list[dict]:
+        """Simple fallback splitter for segments without word timestamps."""
+        text = seg.get("text", "").strip()
+        start = seg.get("start", 0)
+        end = seg.get("end", 0)
+        speaker = seg.get("speaker")
+        duration = end - start
+        
+        if len(text) <= self.max_chars and duration <= self.max_duration:
+            return [{"start": start, "end": end, "text": text, "speaker": speaker}]
+            
+        # Rough split by character count if too long
+        results = []
+        num_chunks = max(int(len(text) / self.max_chars) + 1, int(duration / self.max_duration) + 1)
+        chars_per_chunk = len(text) // num_chunks
+        time_per_chunk = duration / num_chunks
+        
+        for i in range(num_chunks):
+            chunk_text = text[i*chars_per_chunk : (i+1)*chars_per_chunk].strip()
+            if not chunk_text: continue
+            results.append({
+                "start": start + i*time_per_chunk,
+                "end": start + (i+1)*time_per_chunk,
+                "text": chunk_text,
+                "speaker": speaker
+            })
+        return results
+

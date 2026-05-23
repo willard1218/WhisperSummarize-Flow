@@ -109,10 +109,15 @@ class NotifierTests(unittest.TestCase):
                 args1 = mock_send.call_args_list[0]
                 self.assertEqual(args1.args[0], "a@b.com")
                 self.assertIn("Item1", args1.args[1])
-                self.assertIn("Source URL: http://url1", args1.args[3])
-                self.assertIn("Audio duration: 00:10:00", args1.args[3])
-                self.assertIn("Transcription processing time: 00:02:00", args1.args[3])
-                self.assertIn("Summarization processing time: 00:00:30", args1.args[3])
+                
+                expected_meta = (
+                    "Source URL: http://url1\n"
+                    "Audio duration: 00:10:00\n"
+                    "Transcription processing time: 00:02:00\n"
+                    "Summarization processing time: 00:00:30"
+                )
+                self.assertIn(expected_meta, args1.args[3])
+                self.assertIn("\n\nBody for Item1", args1.args[3])
                 
                 # Check second call
                 args2 = mock_send.call_args_list[1]
@@ -131,6 +136,12 @@ class NotifierTests(unittest.TestCase):
                 
                 self.assertTrue(archive1.exists())
                 self.assertIn("Subject: Item1", archive1.read_text())
+                
+                # Verify attachment backup exists
+                attachment_backup1 = temp_path / f"item1.srt.txt.{digest1}.mail.srt"
+                self.assertTrue(attachment_backup1.exists())
+                self.assertEqual(attachment_backup1.read_text(), "content")
+
 
 
 if __name__ == "__main__":

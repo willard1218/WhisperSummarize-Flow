@@ -65,7 +65,10 @@ def render_pipeline(stages: dict, last_update: str, size: int = 0) -> str:
 
 def get_task_title(filename: str) -> str:
     """Extracts a clean title from filenames, removing all known suffixes and hashes."""
+    # Strip hashes and various sent/mail markers
     name = re.sub(r'\.[a-f0-9]{12}\.(mail-)?sent$', '', filename)
+    name = re.sub(r'\.[a-f0-9]{12}\.mail\.txt$', '', name)
+    
     suffixes = [
         ".zh-Hant.summary.md", ".summary.md",
         ".zh-Hant.srt.txt", ".srt.txt",

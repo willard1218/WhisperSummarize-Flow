@@ -4,6 +4,7 @@ import os
 import sys
 import subprocess
 import shutil
+import importlib.util
 from pathlib import Path
 from typing import List, Tuple
 
@@ -99,7 +100,9 @@ def run_health_check():
             check_binary("ffprobe", "FFPROBE_BIN"),
             check_binary("yt-dlp", "YT_DLP_BIN"),
             check_binary("whisperkit-cli", "WHISPERKIT_BIN"),
-            check_binary("opencc", "OPENCC_BIN"),
+            (lambda: (True, "OpenCC found (binary)") if shutil.which("opencc") or os.environ.get("OPENCC_BIN") else (
+                (True, "OpenCC found (python fallback)") if importlib.util.find_spec("opencc") else (False, "OpenCC NOT FOUND (binary or python package)")
+            ))(),
             check_binary("gemini")
         ],
         "Configuration Files": [

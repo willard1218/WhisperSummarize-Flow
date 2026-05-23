@@ -117,14 +117,15 @@ class MailNotifier(BaseNotifier):
                 title = item.title or item.label
                 subject = f"{title} - {subject_date}"
                 
-                body_parts = [f"Source URL: {item.source_url}"]
+                meta_parts = [f"Source URL: {item.source_url}"]
                 if getattr(item, 'duration_str', ''):
-                    body_parts.append(f"Audio duration: {item.duration_str}")
+                    meta_parts.append(f"Audio duration: {item.duration_str}")
                 if getattr(item, 'processing_time_str', ''):
-                    body_parts.append(f"Transcription processing time: {item.processing_time_str}")
+                    meta_parts.append(f"Transcription processing time: {item.processing_time_str}")
                 if getattr(item, 'summarization_time_str', ''):
-                    body_parts.append(f"Summarization processing time: {item.summarization_time_str}")
+                    meta_parts.append(f"Summarization processing time: {item.summarization_time_str}")
                 
+                body_parts = ["\n".join(meta_parts)]
                 body_parts.append(item.mail_body or f"Attached: {item.mail_attachment_path.name}")
                 body = "\n\n".join(body_parts)
                 
@@ -137,6 +138,11 @@ class MailNotifier(BaseNotifier):
                     archive_path = item.mail_attachment_path.with_name(f"{item.mail_attachment_path.name}.{digest}.mail.txt")
                     archive_content = f"Subject: {subject}\nTo: {email}\nDate: {datetime.now().isoformat()}\n\n{body}"
                     archive_path.write_text(archive_content, encoding="utf-8")
+                    
+                    # Save a copy of the actual attachment as it was sent
+                    import shutil
+                    attachment_backup = item.mail_attachment_path.with_name(f"{item.mail_attachment_path.name}.{digest}.mail.srt")
+                    shutil.copy(item.mail_attachment_path, attachment_backup)
                     
                     self.log_event("ok", time.monotonic()-t_start, item.label, email)
                 except Exception as e:

@@ -367,13 +367,17 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
             if item.transcript_path.name.endswith(".srt.txt") and not item.transcript_path.name.endswith(".zh-Hant.srt.txt"):
                 hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
                 if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
-                    run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
+                    res = run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", args.opencc_config])
+                    if res.returncode != 0:
+                        raise RuntimeError(res.stderr.strip() or f"OpenCC conversion failed for SRT (status {res.returncode})")
             
             txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
             if txt_path.exists() and not txt_path.name.endswith(".zh-Hant.txt"):
                 txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
                 if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
-                    run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
+                    res = run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", args.opencc_config])
+                    if res.returncode != 0:
+                        raise RuntimeError(res.stderr.strip() or f"OpenCC conversion failed for TXT (status {res.returncode})")
             
             hant_srt = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
             if hant_srt.exists():

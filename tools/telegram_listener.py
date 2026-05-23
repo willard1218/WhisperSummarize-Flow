@@ -144,29 +144,6 @@ class TelegramApiClient:
     def delete_webhook(self, drop_pending_updates: bool = False) -> dict | None:
         return self.call_api("deleteWebhook", {"drop_pending_updates": drop_pending_updates})
 
-class UrlTaskStore:
-    def __init__(self, store_path: Path):
-        self.path = store_path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-
-    def _load(self) -> dict:
-        if not self.path.exists(): return {}
-        try: return json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception: return {}
-
-    def _save(self, data: dict):
-        self.path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    def get_id_for_url(self, url: str) -> str:
-        url_hash = hashlib.md5(url.encode("utf-8")).hexdigest()[:16]
-        data = self._load()
-        data[url_hash] = url
-        self._save(data)
-        return url_hash
-
-    def get_url_by_id(self, url_id: str) -> str | None:
-        return self._load().get(url_id)
-
 class TranscriptionStatusProvider:
     def __init__(self, lock_paths: list[Path] | None = None):
         self.lock_paths = lock_paths or [
@@ -281,18 +258,16 @@ class MessageInterpreter:
         return cleaned if cleaned and not cleaned.startswith("___") else f"{fallback_kind}_{int(time.time())}.{extension}"
 
 class TelegramUpdateHandler:
-    def __init__(self, settings: ListenerSettings, api_client: TelegramApiClient, status_provider: TranscriptionStatusProvider, pipeline_launcher: PipelineLauncher, file_downloader: TelegramFileDownloader, url_task_store: UrlTaskStore, interpreter: MessageInterpreter | None = None):
+    def __init__(self, settings: ListenerSettings, api_client: TelegramApiClient, status_provider: TranscriptionStatusProvider, pipeline_launcher: PipelineLauncher, file_downloader: TelegramFileDownloader, interpreter: MessageInterpreter | None = None):
         self.settings = settings
         self.api_client = api_client
         self.status_provider = status_provider
         self.pipeline_launcher = pipeline_launcher
         self.file_downloader = file_downloader
-        self.url_task_store = url_task_store
         self.interpreter = interpreter or MessageInterpreter()
 
     def handle(self, update: dict) -> None:
         if "message" in update: self._handle_message(update["message"])
-        elif "callback_query" in update: self._handle_callback(update["callback_query"])
 
     def _handle_message(self, message: dict) -> None:
         chat_id = str(message.get("chat", {}).get("id"))
@@ -357,10 +332,21 @@ class TelegramUpdateHandler:
             return
 
         urls = self.interpreter.extract_supported_urls(self.interpreter.combined_text(message))
-        if urls: logger.info(f"URLs extracted count={len(urls)} urls={urls}", action="url_detected")
-        for url in urls: self._send_url_confirmation(chat_id, url)
+        if urls:
+            logger.info(f"URLs extracted count={len(urls)} urls={urls}", action="url_detected")
+            if self.status_provider.is_busy():
+                self.api_client.send_message(chat_id, "系統忙碌中，請稍後再試。")
+                return
+            
+            for url in urls:
+                self.api_client.send_message(chat_id, f"收到網址，立即執行：\n{url}")
+                self.pipeline_launcher.run(chat_id=chat_id, url=url)
 
     def _handle_media(self, chat_id: str, media: MediaMessage) -> None:
+        if self.status_provider.is_busy():
+            self.api_client.send_message(chat_id, "系統忙碌中，請稍後再試。")
+            return
+
         safe_name = self.interpreter.safe_filename(media.original_name, media.kind, media.extension)
         task_dir = telegram_media_output_dir(self.settings.base_dir / "output", media.kind, media.original_name)
         dest = task_dir / safe_name
@@ -371,29 +357,6 @@ class TelegramUpdateHandler:
             self.pipeline_launcher.run(chat_id=chat_id, local_file=dest)
         else:
             self.api_client.send_message(chat_id, "下載失敗。")
-
-    def _send_url_confirmation(self, chat_id: str, url: str) -> None:
-        status = self.status_provider.describe()
-        msg = f"偵測到網址：\n{url}\n\n目前狀態：{status}\n是否啟動？"
-        url_id = self.url_task_store.get_id_for_url(url)
-        markup = {"inline_keyboard": [[{"text": "確認執行", "callback_data": f"exec|{url_id}"}, {"text": "取消", "callback_data": "cancel"}]]}
-        self.api_client.send_message(chat_id, msg, reply_markup=markup)
-
-    def _handle_callback(self, cb: dict) -> None:
-        cid, chat_id, msg_id, data = cb["id"], cb["message"]["chat"]["id"], cb["message"]["message_id"], cb.get("data", "")
-        logger.info(f"Callback received chat_id={chat_id} data=\"{data}\"", action="callback_recv")
-        if data.startswith("exec|"):
-            url = self.url_task_store.get_url_by_id(data.split("|", 1)[1])
-            if not url:
-                self.api_client.answer_callback_query(cid, "錯誤：找不到網址")
-                return
-            self.api_client.answer_callback_query(cid, "任務已啟動")
-            self.api_client.edit_message_reply_markup(chat_id, msg_id, reply_markup=None)
-            self.api_client.send_message(chat_id, f"已啟動任務：\n{url}")
-            self.pipeline_launcher.run(chat_id=chat_id, url=url)
-        elif data == "cancel":
-            self.api_client.answer_callback_query(cid, "已取消")
-            self.api_client.edit_message_reply_markup(chat_id, msg_id, reply_markup=None)
 
 class TelegramPoller:
     def __init__(self, api_client: TelegramApiClient, update_handler: TelegramUpdateHandler):
@@ -438,7 +401,7 @@ def main() -> int:
     api_client = TelegramApiClient(settings)
     api_client.delete_webhook()
     
-    poller = TelegramPoller(api_client, TelegramUpdateHandler(settings, api_client, TranscriptionStatusProvider(), PipelineLauncher(settings.base_dir, settings.python_executable), TelegramFileDownloader(api_client, settings.bot_token), UrlTaskStore(settings.base_dir / "output" / "telegram" / "url_tasks.json")))
+    poller = TelegramPoller(api_client, TelegramUpdateHandler(settings, api_client, TranscriptionStatusProvider(), PipelineLauncher(settings.base_dir, settings.python_executable), TelegramFileDownloader(api_client, settings.bot_token)))
     poller.run_forever()
     return 0
 
