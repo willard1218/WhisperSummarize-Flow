@@ -38,19 +38,25 @@
 
 Telegram 任務資料夾會附帶 `metadata.json`，記錄來源 URL、chat id、建立時間與檔案資訊，方便後續重跑、補寄與除錯。
 
+## 轉錄與字幕優化 (Transcription Logic)
+
+- **全域線性化時間軸 (Global Linearization)**: 為解決 WhisperKit 在重疊語音或背景雜訊下產生的時間軸跳躍問題，系統實作了全域線性重建演算法。它以大片段（Segment）為錨點，依據字數比例重新分配單字級時間戳，確保 SRT 100% 單調遞增且不跳轉。
+- **語法感知斷句 (Grammatical Cohesion)**: 切割 SRT 時會主動偵測標點符號與虛詞（如「一個」、「的」、「是」），並執行「強制黏著」邏輯，確保每一行字幕語意完整，避免行首孤字（Orphan characters）。
+- **自動清理機制**: 為節省空間，`WhisperKitTranscriber` 會在轉錄完成後自動刪除中間產生的 `.wav` 檔案（若該檔案非原始來源）。
+
 ## Telegram Listener 分層
 
-`tools/telegram_listener.py` 已依職責切分為數個元件，避免單一函式同時負責輪詢、解析訊息、下載檔案與啟動 pipeline：
+`tools/telegram_listener.py` 已依職責切分為數個元件：
 
 - `ListenerSettings`: 封裝 bot token、工作目錄與授權 chat id。
 - `TelegramApiClient`: 單獨負責 Telegram Bot API 呼叫，具備超時重試機制。
-- `UrlTaskStore`: 負責長網址與短 ID 的映射（MD5），解決 Telegram 64-byte callback_data 限制。
 - `TranscriptionStatusProvider`: 只負責判斷目前轉錄鎖狀態。
 - `PipelineLauncher`: 單獨組裝並啟動 `run_daily_pipeline.py`。
 - `TelegramFileDownloader`: 專責下載 Telegram 檔案。
 - `MessageInterpreter`: 專責解析支援的網址（YouTube/SoundOn/Apple Podcast）與媒體訊息。
-- `TelegramUpdateHandler`: 組合上述服務，處理單筆 update。
+- `TelegramUpdateHandler`: 組合上述服務，處理單筆 update。實現「收到連結即自動執行」與「忙碌偵測」邏輯。
 - `TelegramPoller`: 專責長輪詢與 update offset 推進。
+
 
 這樣的拆分讓 listener 可以在不依賴真實 Telegram 服務與 Whisper 的情況下進行單元測試。
 
