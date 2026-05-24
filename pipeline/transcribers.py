@@ -58,87 +58,87 @@ class WhisperKitTranscriber(BaseTranscriber):
     def transcribe(self, audio_path: Path, output_dir: Path) -> Path | None:
         # 1. Convert to WAV (16kHz mono)
         wav_path = audio_path.with_suffix(".wav")
-        should_convert = not wav_path.exists()
-        if not should_convert:
-            # Check if source is newer
-            if audio_path.stat().st_mtime > wav_path.stat().st_mtime:
-                should_convert = True
+        is_temporary_wav = (wav_path != audio_path)
         
-        if should_convert:
-            logger.info(f"Converting to 16kHz WAV: {audio_path.name}", action="ffmpeg_convert")
-            subprocess.run([
-                self.ffmpeg_bin, "-y", "-i", str(audio_path),
-                "-ac", "1", "-ar", "16000", str(wav_path)
-            ], check=True, capture_output=True)
+        try:
+            should_convert = not wav_path.exists()
+            if not should_convert:
+                # Check if source is newer
+                if audio_path.stat().st_mtime > wav_path.stat().st_mtime:
+                    should_convert = True
+            
+            if should_convert:
+                logger.info(f"Converting to 16kHz WAV: {audio_path.name}", action="ffmpeg_convert")
+                subprocess.run([
+                    self.ffmpeg_bin, "-y", "-i", str(audio_path),
+                    "-ac", "1", "-ar", "16000", str(wav_path)
+                ], check=True, capture_output=True)
 
-        # 2. Run WhisperKit
-        cmd = [
-            self.bin_path, "transcribe",
-            "--audio-path", str(wav_path),
-            "--diarization",
-            "--language", "zh"
-        ]
-        if self.model_path:
-            cmd += ["--model-path", self.model_path]
-        
-        # WhisperKit often outputs to the current directory or a report directory.
-        # We'll use --report-path to keep it organized.
-        report_dir = output_dir / "reports"
-        report_dir.mkdir(exist_ok=True)
-        cmd += ["--report-path", str(report_dir), "--report"]
+            # 2. Run WhisperKit
+            cmd = [
+                self.bin_path, "transcribe",
+                "--audio-path", str(wav_path),
+                "--diarization",
+                "--language", "zh"
+            ]
+            if self.model_path:
+                cmd += ["--model-path", self.model_path]
+            
+            report_dir = output_dir / "reports"
+            report_dir.mkdir(exist_ok=True)
+            cmd += ["--report-path", str(report_dir), "--report"]
 
-        logger.info(f"Running WhisperKit command=\"{' '.join(cmd)}\"", action="transcribe_start")
-        
-        segments = []
-        # Improved regex to handle filenames and text with spaces
-        # Format: SPEAKER [FILENAME] [ID] [START] [DURATION] [TEXT] <NA> [SPEAKER_ID] <NA> <NA>
-        speaker_pattern = re.compile(
-            r"^SPEAKER\s+"          # Start
-            r".+?\s+"               # Filename (non-greedy, skip)
-            r"\d+\s+"               # Stream ID (skip)
-            r"(\d+(?:\.\d+)?)\s+"   # Start time (Group 1)
-            r"(\d+(?:\.\d+)?)\s+"   # Duration (Group 2)
-            r"(.+?)\s+"             # Text content (Group 3)
-            r"<NA>\s+(\S+)\s+"      # Speaker ID (Group 4)
-            r"<NA>\s+<NA>"          # Tail
-        )
-        
-        # Capture output but don't stream every line to stdout
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-        if process.stdout:
-            for line in process.stdout:
-                # We still need to process lines to build segments for WhisperKitReportWriter
-                match = speaker_pattern.match(line.strip())
-                if match:
-                    start = float(match.group(1))
-                    duration = float(match.group(2))
-                    segments.append({
-                        "start": start,
-                        "end": start + duration,
-                        "text": match.group(3).strip(),
-                        "speaker": match.group(4)
-                    })
-        
-        process.wait()
-        
-        if segments:
-            # Successfully captured speaker info from stdout
-            result_path = WhisperKitReportWriter(audio_path).write(segments)
-            logger.info(f"Transcription finished segments={len(segments)} output=\"{result_path.name}\"", action="transcribe_ok")
+            logger.info(f"Running WhisperKit command=\"{' '.join(cmd)}\"", action="transcribe_start")
+            
+            segments = []
+            speaker_pattern = re.compile(
+                r"^SPEAKER\s+"
+                r".+?\s+"
+                r"\d+\s+"
+                r"(\d+(?:\.\d+)?)\s+"
+                r"(\d+(?:\.\d+)?)\s+"
+                r"(.+?)\s+"
+                r"<NA>\s+(\S+)\s+"
+                r"<NA>\s+<NA>"
+            )
+            
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            if process.stdout:
+                for line in process.stdout:
+                    match = speaker_pattern.match(line.strip())
+                    if match:
+                        start = float(match.group(1))
+                        duration = float(match.group(2))
+                        segments.append({
+                            "start": start,
+                            "end": start + duration,
+                            "text": match.group(3).strip(),
+                            "speaker": match.group(4)
+                        })
+            
+            process.wait()
+            
+            result_path = None
+            if segments:
+                result_path = WhisperKitReportWriter(audio_path).write(segments)
+                logger.info(f"Transcription finished segments={len(segments)} output=\"{result_path.name}\"", action="transcribe_ok")
+            else:
+                audio_stem = wav_path.stem
+                report_json = report_dir / audio_stem / "transcription.json"
+                if not report_json.exists():
+                    report_json = report_dir / f"{audio_stem}.json"
+                
+                if process.returncode == 0 and report_json.exists():
+                    result_path = self._process_report(report_json, audio_path)
+            
             return result_path
+            
+        finally:
+            # Cleanup intermediate WAV file if it was created from a different source
+            if is_temporary_wav and wav_path.exists():
+                logger.info(f"Cleaning up intermediate WAV: {wav_path.name}", action="cleanup")
+                wav_path.unlink(missing_ok=True)
 
-        # Fallback: WhisperKit produces a JSON report. We need to find it and convert it to .srt.txt and .txt
-        # Example: reports/<audio_name>/transcription.json or reports/<audio_name>.json
-        audio_stem = wav_path.stem
-        report_json = report_dir / audio_stem / "transcription.json"
-        
-        if not report_json.exists():
-            report_json = report_dir / f"{audio_stem}.json"
-        
-        if process.returncode == 0 and report_json.exists():
-            return self._process_report(report_json, audio_path)
-        
-        return None
 
     def _process_report(self, report_json: Path, original_audio: Path) -> Path | None:
         try:
@@ -190,70 +190,118 @@ class WhisperKitReportWriter:
         return srt_path
 
     def _resegment(self, segments: list[dict]) -> list[dict]:
-        entries = []
-        
+        # 1. Flatten all words across all segments in sequence
+        all_words = []
         for seg in segments:
             speaker = seg.get("speaker")
-            words = seg.get("words", [])
-            
-            if not words:
-                entries.extend(self._split_text_segment(seg))
-                continue
-
-            current_words = []
-            chunk_start = words[0].get("start", 0)
-            
-            for i, w in enumerate(words):
-                w_start = w.get("start", 0)
-                w_end = w.get("end", 0)
-                w_text = w.get("word", "").strip()
+            raw_words = seg.get("words", [])
+            for rw in raw_words:
+                w_text = rw.get("word", "").strip()
                 if not w_text: continue
-                
-                # Always add current word first (to ensure no orphan if we split)
-                current_words.append({"text": w_text, "end": w_end, "start": w_start})
-                
-                # Check split conditions AFTER adding the word
-                should_split = False
-                current_len = sum(len(x["text"]) for x in current_words)
-                current_duration = w_end - chunk_start
-                
-                # Rule 1: Gap to NEXT word > 0.8s
-                if i + 1 < len(words):
-                    next_w = words[i+1]
-                    if next_w.get("start", 0) - w_end >= 0.8:
+                all_words.append({"text": w_text, "speaker": speaker})
+
+        if not all_words:
+            results = []
+            for seg in segments: results.extend(self._split_text_segment(seg))
+            return results
+
+        # 2. Global Linearized Timeline Reconstruction
+        total_chars = sum(len(w["text"]) for w in all_words)
+        total_duration = max(segments[-1].get("end", 0.0), 1.0) if segments else 1.0
+        
+        reconstructed_words = []
+        elapsed_chars = 0
+        for w in all_words:
+            char_len = len(w["text"])
+            w_start = (elapsed_chars / total_chars) * total_duration
+            elapsed_chars += char_len
+            w_end = (elapsed_chars / total_chars) * total_duration
+            reconstructed_words.append({
+                "text": w["text"],
+                "start": round(w_start, 3),
+                "end": round(w_end, 3),
+                "speaker": w["speaker"]
+            })
+
+        # 3. Group into SRT entries with high-quality breaking rules
+        must_glue_suffixes = r"(一個|一个|的|了|是|在|和|與|与|為|为|或|及)$"
+        date_pattern = r"\d+[年月日至號号]"
+        punct_to_strip = r"^[，。,．？！,.\?! \t]+"
+        import re
+
+        entries = []
+        current_words = []
+        chunk_start = reconstructed_words[0]["start"]
+
+        for i, w in enumerate(reconstructed_words):
+            current_words.append(w)
+            w_text = w["text"]
+            w_end = w["end"]
+            w_speaker = w["speaker"]
+            
+            should_split = False
+            current_len = sum(len(x["text"]) for x in current_words)
+            current_duration = w_end - chunk_start
+            
+            # Rule A: Speaker change
+            if i + 1 < len(reconstructed_words):
+                if reconstructed_words[i+1]["speaker"] != w_speaker:
+                    should_split = True
+            
+            # Rule B: Punctuation (Strong split)
+            if not should_split and current_len >= 12:
+                if any(p in w_text for p in "。！？"):
+                    should_split = True
+            
+            # Rule C: Comma (Medium split)
+            if not should_split and current_len >= 20:
+                if any(p in w_text for p in "，,"):
+                    should_split = True
+            
+            # Rule D: Length Hard Limits (with Glue Check)
+            if not should_split:
+                # If current word is English, check if it's the start of something that should be kept
+                # (Simple heuristic: don't break between two English words)
+                is_english = bool(re.search(r'[A-Za-z]$', w_text))
+                is_next_english = False
+                if i + 1 < len(reconstructed_words):
+                    is_next_english = bool(re.search(r'^[A-Za-z]', reconstructed_words[i+1]["text"]))
+
+                if current_len >= self.max_chars or current_duration >= self.max_duration:
+                    is_glued = bool(re.search(must_glue_suffixes, w_text))
+                    is_date = bool(re.search(date_pattern, w_text))
+                    
+                    if not is_glued and not is_date and not (is_english and is_next_english):
                         should_split = True
-                
-                # Rule 2: Punctuation split (if long enough)
-                if not should_split and current_len >= 15:
-                    if any(p in w_text for p in "。！？，,"):
-                        should_split = True
-                        
-                # Rule 3: Max length/duration safety net
-                if not should_split:
-                    if current_len >= self.max_chars or current_duration >= self.max_duration:
+                    elif current_len > 40: # Hard limit
                         should_split = True
 
-                if should_split:
-                    entries.append({
-                        "start": chunk_start,
-                        "end": w_end,
-                        "text": "".join(x["text"] for x in current_words).replace("  ", " ").strip(),
-                        "speaker": speaker
-                    })
-                    current_words = []
-                    if i + 1 < len(words):
-                        chunk_start = words[i+1].get("start", 0)
+            if should_split:
+                text = "".join(x["text"] for x in current_words).strip()
+                # Remove leading punctuation
+                text = re.sub(punct_to_strip, "", text)
+                if text:
+                    entries.append({"start": chunk_start, "end": w_end, "text": text, "speaker": w_speaker})
+                current_words = []
+                if i + 1 < len(reconstructed_words):
+                    chunk_start = reconstructed_words[i+1]["start"]
 
-            # Final flush
-            if current_words:
-                entries.append({
-                    "start": chunk_start,
-                    "end": current_words[-1]["end"],
-                    "text": "".join(x["text"] for x in current_words).replace("  ", " ").strip(),
-                    "speaker": speaker
-                })
+        if current_words:
+            text = "".join(x["text"] for x in current_words).strip()
+            text = re.sub(punct_to_strip, "", text)
+            if text:
+                entries.append({"start": chunk_start, "end": current_words[-1]["end"], "text": text, "speaker": current_words[-1]["speaker"]})
 
-        return entries
+        # Final pass: Ensure global monotonicity across segments
+        final_entries = []
+        last_global_end = 0.0
+        for entry in entries:
+            entry["start"] = max(entry["start"], last_global_end)
+            entry["end"] = max(entry["end"], entry["start"] + 0.01)
+            final_entries.append(entry)
+            last_global_end = entry["end"]
+
+        return final_entries
 
     def _split_text_segment(self, seg: dict) -> list[dict]:
         """Simple fallback splitter for segments without word timestamps."""
