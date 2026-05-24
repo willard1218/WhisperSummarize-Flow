@@ -82,6 +82,7 @@ class DailyItem:
     duration_str: str = ""
     processing_time_str: str = ""
     summarization_time_str: str = ""
+    speaker_count: int = 0
     failed: bool = False
     download_ready: bool = False
     messages: list[str] = field(default_factory=list)
@@ -322,9 +323,11 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                 context.report_status(item_index, f"🎙️ 開始轉錄 ({args.transcriber_type})")
                 t_start = time.monotonic()
                 
-                item.transcript_path = transcriber.transcribe(item.audio_path, item.output_dir)
+                res_data = transcriber.transcribe(item.audio_path, item.output_dir)
                 
-                if item.transcript_path and item.transcript_path.exists(): 
+                if res_data and res_data[0].exists():
+                    item.transcript_path = res_data[0]
+                    item.speaker_count = res_data[1]
                     duration_secs = time.monotonic() - t_start
                     context.report_status(item_index, "✅ 轉錄完成")
                     context.log_event(item_index, "transcribe", "ok", duration_secs, item.transcript_path.name)
@@ -341,7 +344,8 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                     # Persist all stats to metadata
                     update_task_metadata(item.output_dir, {
                         "processing_time_str": item.processing_time_str,
-                        "duration_str": item.duration_str
+                        "duration_str": item.duration_str,
+                        "speaker_count": item.speaker_count
                     })
                 else: 
                     item.failed = True
@@ -416,7 +420,19 @@ def process_item_full_lifecycle(item_index: int, args, context: PipelineContext,
                 
                 if summary_path and summary_path.exists():
                     duration_secs = duration_secs if args.mock else (time.monotonic() - t_start)
-                    item.mail_body = summary_path.read_text(encoding="utf-8")
+                    summary_text = summary_path.read_text(encoding="utf-8")
+                    
+                    # Try to recover speaker_count from metadata if not already set (e.g. cached run)
+                    if not item.speaker_count:
+                        meta = load_task_metadata(item.output_dir)
+                        item.speaker_count = meta.get("speaker_count", 0)
+
+                    # Add guest count if applicable
+                    if item.speaker_count > 1:
+                        guest_sentence = f"本訪談總共有{item.speaker_count - 1}位來賓"
+                        summary_text = f"{guest_sentence}\n\n{summary_text}"
+                    
+                    item.mail_body = summary_text
                     
                     # If duration is significant, it means a real summary happened
                     if duration_secs > 1.0 or not item.summarization_time_str:

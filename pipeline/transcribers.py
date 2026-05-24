@@ -10,8 +10,8 @@ logger = get_logger("transcribers")
 
 class BaseTranscriber(ABC):
     @abstractmethod
-    def transcribe(self, audio_path: Path, output_dir: Path) -> Path | None:
-        """Transcribes the audio file and returns the path to the resulting transcript."""
+    def transcribe(self, audio_path: Path, output_dir: Path) -> tuple[Path, int] | None:
+        """Transcribes the audio file and returns (transcript_path, speaker_count)."""
         pass
 
     @staticmethod
@@ -38,7 +38,7 @@ class WhisperCPPTranscriber(BaseTranscriber):
     def __init__(self, script_path: str):
         self.script_path = script_path
 
-    def transcribe(self, audio_path: Path, output_dir: Path) -> Path | None:
+    def transcribe(self, audio_path: Path, output_dir: Path) -> tuple[Path, int] | None:
         # Currently gensrt.sh handles the lock, but run_daily_pipeline also has a lock.
         # To maintain compatibility, we just call the script.
         res = subprocess.run([self.script_path, str(audio_path)])
@@ -46,7 +46,7 @@ class WhisperCPPTranscriber(BaseTranscriber):
             # gensrt.sh produces .srt.txt
             transcript = audio_path.with_suffix(".srt.txt")
             if transcript.exists():
-                return transcript
+                return transcript, 1
         return None
 
 class WhisperKitTranscriber(BaseTranscriber):
@@ -118,10 +118,10 @@ class WhisperKitTranscriber(BaseTranscriber):
             
             process.wait()
             
-            result_path = None
+            result_data = None
             if segments:
-                result_path = WhisperKitReportWriter(audio_path).write(segments)
-                logger.info(f"Transcription finished segments={len(segments)} output=\"{result_path.name}\"", action="transcribe_ok")
+                result_data = WhisperKitReportWriter(audio_path).write(segments)
+                logger.info(f"Transcription finished segments={len(segments)} output=\"{result_data[0].name}\" speakers={result_data[1]}", action="transcribe_ok")
             else:
                 audio_stem = wav_path.stem
                 report_json = report_dir / audio_stem / "transcription.json"
@@ -129,9 +129,9 @@ class WhisperKitTranscriber(BaseTranscriber):
                     report_json = report_dir / f"{audio_stem}.json"
                 
                 if process.returncode == 0 and report_json.exists():
-                    result_path = self._process_report(report_json, audio_path)
+                    result_data = self._process_report(report_json, audio_path)
             
-            return result_path
+            return result_data
             
         finally:
             # Cleanup intermediate WAV file if it was created from a different source
@@ -140,12 +140,12 @@ class WhisperKitTranscriber(BaseTranscriber):
                 wav_path.unlink(missing_ok=True)
 
 
-    def _process_report(self, report_json: Path, original_audio: Path) -> Path | None:
+    def _process_report(self, report_json: Path, original_audio: Path) -> tuple[Path, int] | None:
         try:
             data = json.loads(report_json.read_text(encoding="utf-8"))
-            result_path = WhisperKitReportWriter(original_audio).write(data.get("segments", []))
-            logger.info(f"Transcription report processed path=\"{result_path.name}\"", action="report_ok")
-            return result_path
+            result_data = WhisperKitReportWriter(original_audio).write(data.get("segments", []))
+            logger.info(f"Transcription report processed path=\"{result_data[0].name}\" speakers={result_data[1]}", action="report_ok")
+            return result_data
         except Exception as e:
             logger.error(f"Error processing WhisperKit report: {e}", action="report_error")
             return None
@@ -166,12 +166,17 @@ class WhisperKitReportWriter:
         millis = int((seconds_value - int(seconds_value)) * 1000)
         return f"{hours:02}:{minutes:02}:{seconds:02},{millis:03}"
 
-    def write(self, segments: list[dict]) -> Path:
+    def write(self, segments: list[dict]) -> tuple[Path, int]:
         srt_path = self.original_audio.with_suffix(".srt.txt")
         txt_path = self.original_audio.with_suffix(".txt")
 
         # 1. Flatten into sub-segments based on words, speaker changes and gaps
         processed_entries = self._resegment(segments)
+        
+        # Only show speakers if there's more than one
+        unique_speakers = {e.get("speaker") for e in processed_entries if e.get("speaker")}
+        speaker_count = len(unique_speakers)
+        show_speakers = speaker_count > 1
 
         with open(srt_path, "w", encoding="utf-8") as srt_handle, open(txt_path, "w", encoding="utf-8") as txt_handle:
             for index, entry in enumerate(processed_entries, 1):
@@ -180,14 +185,14 @@ class WhisperKitReportWriter:
                 text = entry["text"]
                 speaker = entry.get("speaker")
                 
-                line_text = f"[{speaker}] {text}" if speaker else text
+                line_text = f"[{speaker}] {text}" if (speaker and show_speakers) else text
 
                 srt_handle.write(f"{index}\n")
                 srt_handle.write(f"{self.format_time(start)} --> {self.format_time(end)}\n")
                 srt_handle.write(f"{line_text}\n\n")
                 txt_handle.write(f"{line_text}\n")
 
-        return srt_path
+        return srt_path, speaker_count
 
     def _resegment(self, segments: list[dict]) -> list[dict]:
         # 1. Flatten all words across all segments in sequence
