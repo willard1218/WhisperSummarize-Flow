@@ -21,7 +21,7 @@ sys.path.insert(0, str(BASE_DIR))
 sys.path.insert(0, str(BASE_DIR / "tools"))
 
 from local_config import load_local_config
-from output_paths import telegram_media_output_dir, write_task_metadata
+from output_paths import telegram_media_output_dir, telegram_url_output_dir, write_task_metadata
 from logger import setup_logging, get_logger, TaskLogger
 
 logger = get_logger("telegram_listener")
@@ -334,11 +334,34 @@ class TelegramUpdateHandler:
         urls = self.interpreter.extract_supported_urls(self.interpreter.combined_text(message))
         if urls:
             logger.info(f"URLs extracted count={len(urls)} urls={urls}", action="url_detected")
-            if self.status_provider.is_busy():
-                self.api_client.send_message(chat_id, "系統忙碌中，請稍後再試。")
-                return
             
             for url in urls:
+                # 1. Check if already processed (Instant return)
+                target_dir = telegram_url_output_dir(self.settings.base_dir / "output", url)
+                summary_files = sorted(list(target_dir.glob("*.summary.md")), key=lambda p: p.stat().st_mtime, reverse=True)
+                
+                if summary_files:
+                    summary_path = summary_files[0]
+                    logger.info(f"Existing summary found for url={url} path={summary_path}", action="cache_hit")
+                    
+                    title = ""
+                    meta_path = target_dir / "metadata.json"
+                    if meta_path.exists():
+                        try:
+                            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                            title = meta.get("title", "")
+                        except: pass
+                    
+                    content = summary_path.read_text(encoding="utf-8")
+                    msg = f"此網址已處理過，直接回傳結果：\n\n# {title or '摘要'}\n\n{content}"
+                    self.api_client.send_message(chat_id, msg)
+                    continue
+
+                # 2. Busy check for new tasks
+                if self.status_provider.is_busy():
+                    self.api_client.send_message(chat_id, "系統忙碌中，請稍後再試。")
+                    return
+                
                 self.api_client.send_message(chat_id, f"收到網址，立即執行：\n{url}")
                 self.pipeline_launcher.run(chat_id=chat_id, url=url)
 

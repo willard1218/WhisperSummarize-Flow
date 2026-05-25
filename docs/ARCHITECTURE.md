@@ -54,7 +54,7 @@ Telegram 任務資料夾會附帶 `metadata.json`，記錄來源 URL、chat id�
 - `PipelineLauncher`: 單獨組裝並啟動 `run_daily_pipeline.py`。
 - `TelegramFileDownloader`: 專責下載 Telegram 檔案。
 - `MessageInterpreter`: 專責解析支援的網址（YouTube/SoundOn/Apple Podcast）與媒體訊息。
-- `TelegramUpdateHandler`: 組合上述服務，處理單筆 update。實現「收到連結即自動執行」與「忙碌偵測」邏輯。
+- `TelegramUpdateHandler`: 組合上述服務，處理單筆 update。實現「收到連結即自動執行」、「重複網址立即回傳」與「忙碌偵測」邏輯。
 - `TelegramPoller`: 專責長輪詢與 update offset 推進。
 
 
