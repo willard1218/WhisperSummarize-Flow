@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 # Use central logger
-from logger import get_logger
+from tools.logger import get_logger
 
 logger = get_logger("summarizer")
 

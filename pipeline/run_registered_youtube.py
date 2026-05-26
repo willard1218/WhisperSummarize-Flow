@@ -11,11 +11,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-from recipient_groups import resolve_emails, load_recipient_groups
-from output_paths import subscribed_youtube_output_dir, youtube_channel_directory_name
+from project_runtime import bootstrap_project
+
+BASE_DIR = bootstrap_project(ROOT_DIR)
+
+from tools.recipient_groups import resolve_emails, load_recipient_groups
+from tools.output_paths import subscribed_youtube_output_dir, youtube_channel_directory_name
 
 @dataclass
 class YouTubeSyncResult:

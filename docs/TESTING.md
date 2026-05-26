@@ -2,12 +2,15 @@
 
 本專案目前使用 Python 標準函式庫 `unittest` 為主，搭配 `trace` 做覆蓋率檢查，不依賴額外測試套件。
 
+本文以目前程式行為為準；若測試與實作衝突，請先標註衝突點，再決定修測試或修實作。
+
 ## AI / 開發者修改後必跑
 
 每次修改 Python 程式後，至少依序執行：
 
 ```bash
 python3 -m py_compile \
+  project_runtime.py \
   tools/local_config.py \
   tools/telegram_listener.py \
   tools/notifier.py \
@@ -41,10 +44,15 @@ launchctl print gui/$(id -u)/com.whispersummarize.listener | sed -n '1,80p'
 然後在 Telegram 做以下 smoke test：
 
 1. 傳 `/status`，確認會回覆 `空閒中` 或 `忙碌中`。
-2. 傳一個 YouTube 網址，確認會出現「確認執行 / 取消」按鈕。
-3. 按下「確認執行」，確認 listener 有啟動 `run_daily_pipeline.py`。
+2. 傳一個 YouTube 網址，確認 listener 會直接回覆「收到網址，立即執行」。
+3. 確認 listener 有啟動 `run_daily_pipeline.py`。
 4. 傳一個小型音檔，確認 Bot 會先下載再啟動 pipeline.
 5. 檢查 `logs/telegram_listener.log` 是否有正確紀錄上述互動。
+
+## 已知測試落差
+
+- `tests/test_telegram_listener.py` 目前若仍期待「確認執行 / 取消」callback 流程，代表它描述的是舊版 listener 行為。
+- 修改 listener 前，先決定要維持目前的「收到即執行」，還是恢復舊版 confirm UX，再同步修測試。
 
 ## 未來 AI 修改時的最低自我檢查標準
 
@@ -94,7 +102,7 @@ python3 tools/check_daily_status.py
 ### 驗證 Telegram 鎖定偵測 (Idle/Busy)
 ```bash
 # 查看目前的鎖定描述
-python3 -c "import sys; from pathlib import Path; sys.path.insert(0, 'tools'); from telegram_listener import TranscriptionStatusProvider; print(TranscriptionStatusProvider().describe())"
+python3 -c "from tools.telegram_listener import TranscriptionStatusProvider; print(TranscriptionStatusProvider().describe())"
 
 # 人為製造鎖定進行測試
 touch /tmp/whisper_transcription.lock

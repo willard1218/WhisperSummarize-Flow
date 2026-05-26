@@ -10,7 +10,7 @@ from pathlib import Path
 # Setup paths to import logger
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "tools"))
-from logger import setup_logging, get_logger
+from tools.logger import setup_logging, get_logger
 
 logger = get_logger("opencc")
 

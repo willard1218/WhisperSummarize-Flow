@@ -1,26 +1,58 @@
 # 專案架構與進階設定 (Architecture)
 
-本專案遵循 **SOLID** 設計原則，採用高度解耦的插件式架構，確保系統易於擴充且維護成本低。
+本文件以目前程式碼為準，描述真實執行路徑，而不是理想化的未來設計。
 
-## 核心設計原則 (SOLID)
+## 目前架構判讀
 
-- **單一職責 (SRP)**: 下載、轉錄、摘要、通知均由獨立模組負責。
-- **開閉原則 (OCP)**: 
-  - **Pipeline Stages**: 管線流程由多個 `BasePipelineStage` 組成，增加新流程只需新增類別，無需修改主循環。
-  - **Downloader Plugins**: 支援多樣化的網址模式（頻道網址、單一影片/集數網址），透過繼承 `BaseDownloader` 即可擴充下載邏輯，無需改動管線核心。
-  - **RSS Resolvers**: 支援多平台 RSS 解析（SoundOn, Apple Podcasts），透過繼承 `BaseRSSResolver` 即可擴充。
-  - **Transcriber Engines**: 透過繼承 `BaseTranscriber` (如 `WhisperKitTranscriber`, `WhisperCPPTranscriber`)，可無縫切換或新增轉錄後端。
-  - **Notifiers**: 通知管道（SMTP, Telegram）採用動態發現機制，繼承 `BaseNotifier` 即自動生效。
-  - **Summarizers**: 摘要模型（Gemini, Ollama）動態註冊，支援優先序切換。
-- **依賴反轉 (DIP)**: 高層管線邏輯依賴於抽象介面，不直接依賴具體的 AI 模型或通知服務。
+這個專案本質上是「以 `run_daily_pipeline.py` 為核心的流程型 Python 專案」：
 
-## 模組化設計
+- `pipeline/` 放主要流程與來源同步邏輯。
+- `tools/` 放通知、摘要、路徑、設定、listener 與輔助工具。
+- `project_runtime.py` 負責統一 bootstrap 專案 root、env 載入與相對路徑解析。
 
-- **Pipeline (`pipeline/`)**: 負責調度各個 `Stage`，處理任務生命週期。
-- **Tools (`tools/`)**: 提供底層工具支援，如 AI 摘要器、簡繁轉換、通知發送器與 Telegram Bot 互動。
-- **Shared Config Loader (`tools/local_config.py`)**: 統一載入 `config/local_config.sh`，避免不同入口重複實作環境變數解析。
-- **Shared Output Path Policy (`tools/output_paths.py`)**: 統一管理訂閱任務與 Telegram ad-hoc 任務的目錄命名規則。
-- **防止重複**: 每個收件人/通知管道都有獨立的 `.mail-sent` 標記檔案，確保同一集節目不會重複發送。
+目前不是完整的 framework-style application，也不是完全 plugin-driven system。對 AI 維護最重要的是先理解主入口與資料流，而不是先假設所有模組都已經抽象化完成。
+
+## 真實入口
+
+- `pipeline/run_daily_pipeline.py`
+  - 主 orchestrator。
+  - 解析 CLI args。
+  - 載入 `config/local_config.sh`。
+  - 建立 `DailyItem`。
+  - 執行 download -> transcribe -> traditionalize -> summarize -> notify。
+- `tools/telegram_listener.py`
+  - Telegram long polling 入口。
+  - 收到 URL 或媒體後直接啟動 `run_daily_pipeline.py`。
+  - `/status` 會回報 lock 狀態並呼叫 `tools/check_daily_status.py`。
+- `pipeline/run_registered_podcasts.py`
+  - Podcast 訂閱與單集下載整合層。
+- `pipeline/run_registered_youtube.py`
+  - YouTube 頻道最新影片解析與下載整合層。
+
+## 主要資料模型與邊界
+
+- `DailyItem`
+  - 單一處理任務的核心資料結構。
+  - 保存來源 URL、輸出目錄、轉錄檔、摘要文字、寄送狀態。
+- `PipelineContext`
+  - 保存 args、task logger 與整體成功狀態。
+- `BaseDownloader`
+  - 目前實作為 `YouTubeDownloader`、`PodcastDownloader`。
+  - 採 `BaseDownloader.__subclasses__()` 發現，不是外部 plugin registry。
+- `BaseTranscriber`
+  - 目前有 `WhisperKitTranscriber`、`WhisperCPPTranscriber`。
+- `BaseNotifier`
+  - 目前有 `MailNotifier`、`TelegramNotifier`。
+
+## Bootstrap 與路徑策略
+
+所有核心入口現在應遵守同一套 runtime 規則：
+
+- 專案 root 由 `project_runtime.bootstrap_project(...)` 加入 `sys.path`。
+- 環境變數由 `project_runtime.load_project_env(...)` 統一載入 `config/local_config.sh`。
+- 相對設定檔路徑由 `project_runtime.resolve_project_path(...)` 解析，避免因 launchd、cron、手動執行目錄不同而出錯。
+
+這一層對 AI 很重要，因為多數「在我機器上可以、換一個入口就壞掉」的 bug 都來自 bootstrap 與 path resolution。
 
 ## Output 目錄策略
 
@@ -54,11 +86,17 @@ Telegram 任務資料夾會附帶 `metadata.json`，記錄來源 URL、chat id�
 - `PipelineLauncher`: 單獨組裝並啟動 `run_daily_pipeline.py`。
 - `TelegramFileDownloader`: 專責下載 Telegram 檔案。
 - `MessageInterpreter`: 專責解析支援的網址（YouTube/SoundOn/Apple Podcast）與媒體訊息。
-- `TelegramUpdateHandler`: 組合上述服務，處理單筆 update。實現「收到連結即自動執行」、「重複網址立即回傳」與「忙碌偵測」邏輯。
+- `TelegramUpdateHandler`: 組合上述服務，處理單筆 update。實作「收到連結直接執行」、「重複網址優先回傳既有摘要」與「忙碌偵測」。
 - `TelegramPoller`: 專責長輪詢與 update offset 推進。
 
-
 這樣的拆分讓 listener 可以在不依賴真實 Telegram 服務與 Whisper 的情況下進行單元測試。
+
+## 對 AI 維護最重要的現況
+
+- 文件若提到更完整的 plugin/stage framework，請先回頭核對程式碼。
+- `run_daily_pipeline.py` 目前仍然偏胖，屬於高風險修改區。
+- `tools/config_models.py` 與 `tools/registry.py` 已存在，但尚未成為全專案唯一設定/狀態來源。
+- `tests/test_telegram_listener.py` 若與 listener 行為不一致，應先以實作為準，再決定要修測試還是恢復舊互動流程。
 
 ## 執行模式
 

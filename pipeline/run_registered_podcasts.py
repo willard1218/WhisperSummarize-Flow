@@ -12,13 +12,18 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-from download_latest_podcast import fetch_bytes, NO_EPISODE_EXIT_CODE
-from recipient_groups import resolve_emails, load_recipient_groups
-from notifier import marker_path_for, send_mail
-from output_paths import podcast_directory_name, subscribed_podcast_output_dir
+from project_runtime import bootstrap_project
+
+BASE_DIR = bootstrap_project(ROOT_DIR)
+
+from pipeline.download_latest_podcast import fetch_bytes, NO_EPISODE_EXIT_CODE
+from tools.recipient_groups import resolve_emails, load_recipient_groups
+from tools.notifier import marker_path_for, send_mail
+from tools.output_paths import podcast_directory_name, subscribed_podcast_output_dir
 
 @dataclass
 class PodcastSyncResult:

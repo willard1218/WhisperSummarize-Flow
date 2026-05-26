@@ -11,7 +11,7 @@ from datetime import datetime
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "tools"))
 
-from logger import get_logger
+from tools.logger import get_logger
 from notifier import send_telegram_msg
 from local_config import load_local_config
 

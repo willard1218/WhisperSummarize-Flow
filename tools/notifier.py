@@ -14,7 +14,7 @@ from collections import defaultdict
 from datetime import datetime
 
 # Use the centralized logger
-from logger import get_logger
+from tools.logger import get_logger
 
 logger = get_logger("notifier")
 

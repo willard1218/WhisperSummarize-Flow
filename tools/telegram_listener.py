@@ -16,13 +16,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BASE_DIR))
-sys.path.insert(0, str(BASE_DIR / "tools"))
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-from local_config import load_local_config
-from output_paths import telegram_media_output_dir, telegram_url_output_dir, write_task_metadata
-from logger import setup_logging, get_logger, TaskLogger
+from project_runtime import bootstrap_project, load_project_env
+
+BASE_DIR = bootstrap_project(ROOT_DIR)
+
+from tools.output_paths import telegram_media_output_dir, telegram_url_output_dir, write_task_metadata
+from tools.logger import setup_logging, get_logger, TaskLogger
 
 logger = get_logger("telegram_listener")
 
@@ -399,7 +402,7 @@ class TelegramPoller:
             except Exception as e: logger.error(f"Loop error error=\"{e}\"", action="poller_error"); time.sleep(10)
 
 def build_settings() -> ListenerSettings:
-    load_local_config(BASE_DIR / "config" / "local_config.sh", os.environ)
+    load_project_env(BASE_DIR)
     return ListenerSettings(BASE_DIR, os.environ.get("TELEGRAM_BOT_TOKEN", ""), os.environ.get("TELEGRAM_CHAT_ID"), sys.executable)
 
 def main() -> int:
