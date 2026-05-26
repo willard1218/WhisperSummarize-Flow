@@ -10,12 +10,12 @@ from collections import defaultdict
 
 # Setup paths
 BASE_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BASE_DIR / "tools"))
-sys.path.insert(0, str(BASE_DIR / "pipeline"))
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-from run_registered_podcasts import load_subscriptions as load_pod_subs
-from run_registered_youtube import load_subscriptions as load_yt_subs
-from output_paths import subscribed_podcast_output_dir, subscribed_youtube_output_dir
+from pipeline.run_registered_podcasts import load_subscriptions as load_pod_subs
+from pipeline.run_registered_youtube import load_subscriptions as load_yt_subs
+from tools.output_paths import subscribed_podcast_output_dir, subscribed_youtube_output_dir
 
 def format_size(size_bytes: int) -> str:
     """Formats bytes into human-readable string."""

@@ -9,11 +9,12 @@ from datetime import datetime
 
 # Setup paths
 BASE_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BASE_DIR / "tools"))
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from tools.logger import get_logger
-from notifier import send_telegram_msg
-from local_config import load_local_config
+from tools.notifier import send_telegram_msg
+from tools.local_config import load_local_config
 
 logger = get_logger("auto_fixer")
 

@@ -10,9 +10,10 @@ from typing import List, Tuple
 
 # Setup paths
 BASE_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BASE_DIR / "tools"))
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-from local_config import load_local_config
+from tools.local_config import load_local_config
 
 def check_binary(name: str, env_var: str = None) -> Tuple[bool, str]:
     """Checks if a binary is available in PATH or via environment variable."""
