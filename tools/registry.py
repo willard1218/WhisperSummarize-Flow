@@ -19,7 +19,56 @@ class Registry:
                     processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS task_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_type TEXT, -- 'url' or 'file'
+                    payload TEXT,    -- url string or file path
+                    chat_id TEXT,
+                    status TEXT DEFAULT 'pending', -- 'pending', 'processing', 'completed', 'failed'
+                    error_message TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
+
+    def enqueue_task(self, task_type: str, payload: str, chat_id: str) -> int:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                INSERT INTO task_queue (task_type, payload, chat_id)
+                VALUES (?, ?, ?)
+            """, (task_type, payload, chat_id))
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_next_pending_task(self) -> Optional[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT * FROM task_queue 
+                WHERE status = 'pending' 
+                ORDER BY id ASC LIMIT 1
+            """)
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_task_status(self, task_id: int, status: str, error_message: str = None):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                UPDATE task_queue 
+                SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (status, error_message, task_id))
+            conn.commit()
+
+    def get_queue_position(self, task_id: int) -> int:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT COUNT(*) FROM task_queue 
+                WHERE status = 'pending' AND id < ?
+            """, (task_id,))
+            return cursor.fetchone()[0]
 
     def is_processed(self, task_id: str) -> bool:
         with sqlite3.connect(self.db_path) as conn:

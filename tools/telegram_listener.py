@@ -8,8 +8,10 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -26,6 +28,7 @@ BASE_DIR = bootstrap_project(ROOT_DIR)
 
 from tools.output_paths import telegram_media_output_dir, telegram_url_output_dir, write_task_metadata
 from tools.logger import setup_logging, get_logger, TaskLogger
+from tools.registry import Registry
 
 logger = get_logger("telegram_listener")
 
@@ -154,28 +157,49 @@ class TranscriptionStatusProvider:
             Path(os.environ.get("TMPDIR", "/tmp")) / "gensrt.lock",
         ]
 
-    def _is_flock_busy(self, path: Path) -> bool:
-        if not path.exists(): return False
+    def _is_process_alive(self, pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+            # Extra check: is it actually a relevant process?
+            # We can check /proc/{pid}/cmdline on Linux or use ps on macOS
+            res = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True)
+            cmd = res.stdout.lower()
+            return any(x in cmd for x in ["python", "whisper", "gensrt", "ffmpeg", "yt-dlp"])
+        except (ProcessLookupError, PermissionError):
+            return False
+
+    def _check_lock_self_healing(self, path: Path) -> bool:
+        if not path.exists():
+            return False
+        
+        # 1. Try to read PID from lock file
+        try:
+            content = path.read_text().strip()
+            if content.isdigit():
+                pid = int(content)
+                if self._is_process_alive(pid):
+                    return True
+                else:
+                    logger.warning(f"Stale lock detected for pid={pid} at {path}. Self-healing...", action="lock_cleanup")
+                    try: path.unlink()
+                    except: pass
+                    return False
+        except Exception:
+            pass
+
+        # 2. Fallback to flock check
         try:
             with open(path, "r") as f:
                 fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 fcntl.flock(f, fcntl.LOCK_UN)
                 return False
-        except (IOError, BlockingIOError): return True
-        except Exception: return path.exists()
-
-    def _is_dir_lock_busy(self, path: Path) -> bool:
-        if not path.exists(): return False
-        pid_file = path / "pid"
-        if not pid_file.exists(): return True
-        try:
-            pid = int(pid_file.read_text().strip())
-            os.kill(pid, 0)
+        except (IOError, BlockingIOError):
             return True
-        except (ProcessLookupError, ValueError, PermissionError): return False
+        except Exception:
+            return path.exists()
 
     def is_busy(self) -> bool:
-        return self._is_flock_busy(self.lock_paths[0]) or self._is_dir_lock_busy(self.lock_paths[1])
+        return self._check_lock_self_healing(self.lock_paths[0]) or self._check_lock_self_healing(self.lock_paths[1])
 
     def describe(self) -> str:
         return "忙碌中" if self.is_busy() else "空閒中"
@@ -203,11 +227,99 @@ class PipelineLauncher:
         elif local_file: command += ["--local-file", str(local_file)]
         return command
 
-    def run(self, chat_id: str | int, url: str | None = None, local_file: Path | None = None) -> None:
+    def run(self, chat_id: str | int, url: str | None = None, local_file: Path | None = None, wait: bool = False) -> int:
         command = self.build_command(chat_id=chat_id, url=url, local_file=local_file)
-        # Optimized for AI debugging: Log the exact reproduction command
         logger.info(f"Launching pipeline command=\"{' '.join(command)}\"", action="launcher")
-        subprocess.Popen(command, cwd=str(self.base_dir))
+        if wait:
+            res = subprocess.run(command, cwd=str(self.base_dir))
+            return res.returncode
+        else:
+            subprocess.Popen(command, cwd=str(self.base_dir))
+            return 0
+
+class TaskWorker:
+    def __init__(self, settings: ListenerSettings, registry: Registry, api_client: TelegramApiClient, status_provider: TranscriptionStatusProvider, pipeline_launcher: PipelineLauncher):
+        self.settings = settings
+        self.registry = registry
+        self.api_client = api_client
+        self.status_provider = status_provider
+        self.pipeline_launcher = pipeline_launcher
+        self._stop_event = threading.Event()
+        self._consecutive_errors = 0
+
+    def _self_heal_environment(self):
+        """Attempts to fix common daemon-level issues like stale locks or DB access."""
+        logger.info("Running worker self-healing routine...", action="self_heal_start")
+        try:
+            # 1. Check DB health
+            with sqlite3.connect(self.registry.db_path, timeout=5) as conn:
+                conn.execute("SELECT 1")
+            
+            # 2. Check for zombie transcription processes
+            self.status_provider.is_busy() # This triggers lock PID check internally
+            
+            logger.info("Self-healing: Environment looks OK", action="self_heal_ok")
+        except Exception as e:
+            logger.error(f"Self-healing failed to restore environment: {e}", action="self_heal_error")
+
+    def run_forever(self):
+        logger.info("Task Worker thread started", action="worker_start")
+        while not self._stop_event.is_set():
+            try:
+                # 1. Self-healing busy check
+                if self.status_provider.is_busy():
+                    time.sleep(15)
+                    continue
+
+                # 2. Get next task with error recovery
+                try:
+                    task = self.registry.get_next_pending_task()
+                except sqlite3.Error as db_err:
+                    logger.error(f"Database error in worker: {db_err}. Retrying connection...", action="db_error")
+                    self._self_heal_environment()
+                    time.sleep(10)
+                    continue
+
+                if not task:
+                    self._consecutive_errors = 0 # Reset on success
+                    time.sleep(5)
+                    continue
+
+                # 3. Process task
+                task_id = task["id"]
+                chat_id = task["chat_id"]
+                payload = task["payload"]
+                task_type = task["task_type"]
+
+                logger.info(f"Worker picked task_id={task_id} type={task_type} payload={payload}", action="worker_pick")
+                self.registry.update_task_status(task_id, "processing")
+                
+                # Notify user - wrapped in try to not crash worker if network is flaky
+                try:
+                    self.api_client.send_message(chat_id, f"🔄 輪到你了！開始處理：\n{payload}")
+                except Exception as net_err:
+                    logger.warning(f"Failed to notify user: {net_err}", action="notify_fail")
+
+                if task_type == "url":
+                    rc = self.pipeline_launcher.run(chat_id=chat_id, url=payload, wait=True)
+                else:
+                    rc = self.pipeline_launcher.run(chat_id=chat_id, local_file=Path(payload), wait=True)
+
+                # 4. Update result
+                status = "completed" if rc == 0 else "failed"
+                self.registry.update_task_status(task_id, status)
+                logger.info(f"Task task_id={task_id} finished status={status} rc={rc}", action="worker_finish")
+                self._consecutive_errors = 0
+
+            except Exception as e:
+                self._consecutive_errors += 1
+                logger.error(f"Worker loop error (count={self._consecutive_errors}): {e}", action="worker_error")
+                if self._consecutive_errors >= 3:
+                    self._self_heal_environment()
+                time.sleep(min(60, 10 * self._consecutive_errors))
+
+    def stop(self):
+        self._stop_event.set()
 
 class TelegramFileDownloader:
     def __init__(self, api_client: TelegramApiClient, bot_token: str):
@@ -261,12 +373,13 @@ class MessageInterpreter:
         return cleaned if cleaned and not cleaned.startswith("___") else f"{fallback_kind}_{int(time.time())}.{extension}"
 
 class TelegramUpdateHandler:
-    def __init__(self, settings: ListenerSettings, api_client: TelegramApiClient, status_provider: TranscriptionStatusProvider, pipeline_launcher: PipelineLauncher, file_downloader: TelegramFileDownloader, interpreter: MessageInterpreter | None = None):
+    def __init__(self, settings: ListenerSettings, api_client: TelegramApiClient, status_provider: TranscriptionStatusProvider, pipeline_launcher: PipelineLauncher, file_downloader: TelegramFileDownloader, registry: Registry, interpreter: MessageInterpreter | None = None):
         self.settings = settings
         self.api_client = api_client
         self.status_provider = status_provider
         self.pipeline_launcher = pipeline_launcher
         self.file_downloader = file_downloader
+        self.registry = registry
         self.interpreter = interpreter or MessageInterpreter()
 
     def handle(self, update: dict) -> None:
@@ -290,7 +403,15 @@ class TelegramUpdateHandler:
                 res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                 daily_status = res.stdout.strip() if res.returncode == 0 else "Error getting daily status."
             except Exception: daily_status = "Error executing status script."
-            self.api_client.send_message(chat_id, f"目前系統狀態：\n{sys_status}\n\n{daily_status}")
+            
+            # Count pending tasks
+            pending_count = 0
+            with sqlite3.connect(self.registry.db_path) as conn:
+                res = conn.execute("SELECT COUNT(*) FROM task_queue WHERE status = 'pending'")
+                pending_count = res.fetchone()[0]
+            
+            queue_msg = f"\n目前排隊中任務：{pending_count}" if pending_count > 0 else ""
+            self.api_client.send_message(chat_id, f"目前系統狀態：\n{sys_status}{queue_msg}\n\n{daily_status}")
             return
 
         if text == "/dump_log":
@@ -360,19 +481,14 @@ class TelegramUpdateHandler:
                     self.api_client.send_message(chat_id, msg)
                     continue
 
-                # 2. Busy check for new tasks
-                if self.status_provider.is_busy():
-                    self.api_client.send_message(chat_id, "系統忙碌中，請稍後再試。")
-                    return
+                # 2. Enqueue task
+                task_id = self.registry.enqueue_task("url", url, chat_id)
+                pos = self.registry.get_queue_position(task_id)
                 
-                self.api_client.send_message(chat_id, f"收到網址，立即執行：\n{url}")
-                self.pipeline_launcher.run(chat_id=chat_id, url=url)
+                wait_msg = f"\n目前排在第 {pos} 位。" if pos > 0 else ""
+                self.api_client.send_message(chat_id, f"✅ 已收到網址並加入排隊：\n{url}{wait_msg}")
 
     def _handle_media(self, chat_id: str, media: MediaMessage) -> None:
-        if self.status_provider.is_busy():
-            self.api_client.send_message(chat_id, "系統忙碌中，請稍後再試。")
-            return
-
         safe_name = self.interpreter.safe_filename(media.original_name, media.kind, media.extension)
         task_dir = telegram_media_output_dir(self.settings.base_dir / "output", media.kind, media.original_name)
         dest = task_dir / safe_name
@@ -380,9 +496,12 @@ class TelegramUpdateHandler:
         
         self.api_client.send_message(chat_id, f"收到媒體：{media.original_name}\n正在下載...")
         if self.file_downloader.download(media.file_id, dest):
-            self.pipeline_launcher.run(chat_id=chat_id, local_file=dest)
+            task_id = self.registry.enqueue_task("file", str(dest), chat_id)
+            pos = self.registry.get_queue_position(task_id)
+            wait_msg = f"\n目前排在第 {pos} 位。" if pos > 0 else ""
+            self.api_client.send_message(chat_id, f"✅ 下載完成，已加入排隊。{wait_msg}")
         else:
-            self.api_client.send_message(chat_id, "下載失敗。")
+            self.api_client.send_message(chat_id, "❌ 下載失敗。")
 
 class TelegramPoller:
     def __init__(self, api_client: TelegramApiClient, update_handler: TelegramUpdateHandler):
@@ -427,8 +546,29 @@ def main() -> int:
     api_client = TelegramApiClient(settings)
     api_client.delete_webhook()
     
-    poller = TelegramPoller(api_client, TelegramUpdateHandler(settings, api_client, TranscriptionStatusProvider(), PipelineLauncher(settings.base_dir, settings.python_executable), TelegramFileDownloader(api_client, settings.bot_token)))
-    poller.run_forever()
+    registry = Registry(settings.base_dir / "tasks.db")
+    status_provider = TranscriptionStatusProvider()
+    pipeline_launcher = PipelineLauncher(settings.base_dir, settings.python_executable)
+    
+    # Start background worker
+    worker = TaskWorker(settings, registry, api_client, status_provider, pipeline_launcher)
+    worker_thread = threading.Thread(target=worker.run_forever, daemon=True)
+    worker_thread.start()
+    
+    handler = TelegramUpdateHandler(
+        settings, api_client, status_provider, 
+        pipeline_launcher, TelegramFileDownloader(api_client, settings.bot_token),
+        registry
+    )
+    
+    poller = TelegramPoller(api_client, handler)
+    
+    try:
+        poller.run_forever()
+    except KeyboardInterrupt:
+        logger.info("Listener stopping...", action="shutdown")
+        worker.stop()
+        
     return 0
 
 if __name__ == "__main__":

@@ -62,6 +62,8 @@
   - `podcast_title` 來自 `subscriptions.json` 的 `podcast_title`
 - `output/youtube/<channel_name>/`
   - `channel_name` 優先取 YouTube `@handle`
+- `output/telegram/youtube/<channel_name>/<video_id>/`
+  - 為優化管理，Telegram 傳入的連結現在會自動識別頻道名稱並建立次目錄。
 - `output/telegram/audio/<task_id>/`
 - `output/telegram/video/<task_id>/`
 - `output/telegram/youtube/<video_id>/`
@@ -86,7 +88,9 @@ Telegram 任務資料夾會附帶 `metadata.json`，記錄來源 URL、chat id�
 - `PipelineLauncher`: 單獨組裝並啟動 `run_daily_pipeline.py`。
 - `TelegramFileDownloader`: 專責下載 Telegram 檔案。
 - `MessageInterpreter`: 專責解析支援的網址（YouTube/SoundOn/Apple Podcast）與媒體訊息。
-- `TelegramUpdateHandler`: 組合上述服務，處理單筆 update。實作「收到連結直接執行」、「重複網址優先回傳既有摘要」與「忙碌偵測」。
+- `TelegramUpdateHandler`: 組合上述服務，處理單筆 update。實作「收到連結後排隊執行」、「重複網址優先回傳既有摘要」與「隊列狀態回報」。
+- `Registry (Task Queue)`: 使用 `tasks.db` 實作持久化任務隊列，確保大量請求或系統重啟時不漏單。
+- `TaskWorker (Background)`: 獨立的背景執行緒，按順序消化隊列，具備「自癒式鎖清理」與「資料庫斷路器」機制。
 - `TelegramPoller`: 專責長輪詢與 update offset 推進。
 
 這樣的拆分讓 listener 可以在不依賴真實 Telegram 服務與 Whisper 的情況下進行單元測試。

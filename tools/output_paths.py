@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -49,12 +50,15 @@ def subscribed_youtube_output_dir(base_output_root: Path, channel_url: str) -> P
 
 
 def youtube_video_id(url: str) -> str | None:
-    watch_match = re.search(r"[?&]v=([a-zA-Z0-9_-]+)", url)
-    if watch_match:
-        return watch_match.group(1)
-    short_match = re.search(r"youtu\.be/([a-zA-Z0-9_-]+)", url)
-    if short_match:
-        return short_match.group(1)
+    # Standard YouTube video ID is 11 characters
+    patterns = [
+        r"(?:v=|\/v\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})",
+        r"youtu\.be\/([a-zA-Z0-9_-]{11})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
     return None
 
 
@@ -68,7 +72,14 @@ def infer_podcast_slug(url: str) -> str:
 
 def telegram_url_output_dir(base_output_root: Path, url: str) -> Path:
     if "youtube.com" in url or "youtu.be" in url:
-        return base_output_root / "telegram" / "youtube" / (youtube_video_id(url) or "unknown-video")
+        video_id = youtube_video_id(url)
+        if video_id:
+            return base_output_root / "telegram" / "youtube" / video_id
+        
+        # Fallback for YouTube URLs where ID extraction fails (e.g. channel URLs)
+        # Use hash to avoid collisions in "unknown-video"
+        url_hash = hashlib.md5(url.encode()).hexdigest()[:12]
+        return base_output_root / "telegram" / "youtube" / f"unknown-{url_hash}"
     
     if "podcasts.apple.com" in url:
         return base_output_root / "telegram" / "apple_podcast" / infer_podcast_slug(url)

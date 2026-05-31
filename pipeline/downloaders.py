@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import os
+import re
+import shutil
+import subprocess
 import time
+from pathlib import Path
 from typing import Callable
 
 from pipeline.models import DailyItem, PipelineContext
+from tools.output_paths import sanitize_path_segment, update_task_metadata
 
 
 class BaseDownloader:
@@ -36,11 +42,65 @@ class YouTubeDownloader(BaseDownloader):
                 item.source_url = res.specific_url
             if res.title:
                 item.title = res.title
+
+            # Logic to move to channel folder for Telegram ad-hoc tasks
+            if getattr(context.args, "task_origin", "") == "telegram" and "telegram/youtube" in str(item.output_dir):
+                self._move_to_channel_folder(item, context, item_index)
+
             detail = res.audio_path.name if res.audio_path else "ok"
             context.log_event(item_index, "download", "ok", time.monotonic() - t_start, detail)
             return True
         context.log_event(item_index, "download", "skipped", time.monotonic() - t_start, "no new video")
         return False
+
+    def _move_to_channel_folder(self, item: DailyItem, context: PipelineContext, item_index: int) -> None:
+        yt_dlp_bin = os.environ.get("YT_DLP_BIN", "yt-dlp")
+        try:
+            # 1. Fetch channel name
+            res = subprocess.run([yt_dlp_bin, "--print", "%(uploader)s", item.source_url], capture_output=True, text=True, timeout=30)
+            if res.returncode != 0:
+                return
+            channel_name = res.stdout.strip()
+            if not channel_name:
+                return
+            
+            # 2. Prepare new path
+            safe_channel = sanitize_path_segment(channel_name, fallback="unknown-channel")
+            # item.output_dir is typically output/telegram/youtube/{video_id}
+            # We want output/telegram/youtube/{channel}/{video_id}
+            parent = item.output_dir.parent
+            new_output_dir = parent / safe_channel / item.output_dir.name
+            
+            if new_output_dir == item.output_dir:
+                return
+
+            # 3. Move files
+            new_output_dir.parent.mkdir(parents=True, exist_ok=True)
+            if item.output_dir.exists():
+                # If target already exists (e.g. from another run), we might need to merge or just move
+                if new_output_dir.exists():
+                    # Move individual files instead of the directory
+                    for f in item.output_dir.iterdir():
+                        target_f = new_output_dir / f.name
+                        if target_f.exists():
+                            if target_f.is_file(): target_f.unlink()
+                            else: shutil.rmtree(target_f)
+                        shutil.move(str(f), str(new_output_dir))
+                    item.output_dir.rmdir()
+                else:
+                    shutil.move(str(item.output_dir), str(new_output_dir))
+                
+                # Update item state
+                old_path = item.audio_path
+                item.output_dir = new_output_dir
+                if old_path:
+                    item.audio_path = new_output_dir / old_path.name
+                
+                update_task_metadata(item.output_dir, {"channel": channel_name})
+                context.report_status(item_index, f"📂 已歸類至頻道：{channel_name}")
+        except Exception as e:
+            # Log error but don't fail the whole task
+            context.report_status(item_index, f"⚠️ 無法歸類頻道資料夾: {e}", level="warning")
 
 
 class PodcastDownloader(BaseDownloader):
