@@ -74,7 +74,9 @@ Telegram 任務資料夾會附帶 `metadata.json`，記錄來源 URL、chat id�
 
 ## 轉錄與字幕優化 (Transcription Logic)
 
+- **JSON-Stdout 混合語者辨識 (Hybrid Diarization)**: 為解決 WhisperKit CLI stdout 輸出粒度過粗（Diarization 資訊通常幾分鐘才一行）導致 SRT 無法正確分段的問題，系統現在優先採用精細的 `transcription.json` 報告作為時間軸與文字基準，並透過時間重疊演算法將 stdout 抓到的語者 ID 「標記」回精細片段上。
 - **全域線性化時間軸 (Global Linearization)**: 為解決 WhisperKit 在重疊語音或背景雜訊下產生的時間軸跳躍問題，系統實作了全域線性重建演算法。它以大片段（Segment）為錨點，依據字數比例重新分配單字級時間戳，確保 SRT 100% 單調遞增且不跳轉。
+- **粗片段防護機制 (Coarse Segment Splitting)**: 作為兜底機制，若轉錄來源缺少單字級時間戳或片段依然過長，`WhisperKitReportWriter` 會自動執行「粗略分割」，確保每行字幕長度符合 SRT 標準。
 - **語法感知斷句 (Grammatical Cohesion)**: 切割 SRT 時會主動偵測標點符號與虛詞（如「一個」、「的」、「是」），並執行「強制黏著」邏輯，確保每一行字幕語意完整，避免行首孤字（Orphan characters）。
 - **自動清理機制**: 為節省空間，`WhisperKitTranscriber` 會在轉錄完成後自動刪除中間產生的 `.wav` 檔案（若該檔案非原始來源）。
 

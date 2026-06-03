@@ -91,6 +91,66 @@ class TranscriberTests(unittest.TestCase):
             txt_content = (output_dir / "clip.txt").read_text()
             self.assertIn("[A] Hello world", txt_content)
 
+    def test_whisperkit_report_writer_splits_huge_segment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_path = Path(temp_dir) / "huge.mp3"
+            audio_path.write_text("", encoding="utf-8")
+
+            # One huge segment for 10 minutes
+            huge_text = "This is a very long text " * 100 
+            writer = WhisperKitReportWriter(audio_path)
+            # Ensure it splits even without word-level timestamps
+            srt_path = writer.write([{"start": 0.0, "end": 600.0, "text": huge_text, "speaker": "A"}])
+            
+            content = srt_path.read_text()
+            indices = [line for line in content.splitlines() if line.isdigit()]
+            # Should have multiple entries
+            self.assertGreater(len(indices), 10)
+            # Each entry should be reasonably short
+            for line in content.splitlines():
+                if "-->" not in line and not line.isdigit() and line.strip():
+                    self.assertLessEqual(len(line), 100) # Including [A] and some margin
+
+    @patch("pipeline.transcribers.subprocess.Popen")
+    def test_whisperkit_transcriber_merges_json_and_stdout_speakers(self, mock_popen) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            audio_path = output_dir / "merge.mp3"
+            wav_path = output_dir / "merge.wav"
+            report_dir = output_dir / "reports" / "merge"
+            report_dir.mkdir(parents=True)
+            audio_path.write_text("", encoding="utf-8")
+            wav_path.write_text("", encoding="utf-8")
+            
+            # JSON has 2 segments but no speakers
+            (report_dir / "transcription.json").write_text(
+                json.dumps({"segments": [
+                    {"start": 0.0, "end": 30.0, "text": "This is a very long first segment that should not be merged."},
+                    {"start": 30.0, "end": 60.0, "text": "This is a very long second segment that should also stand alone."}
+                ]}),
+                encoding="utf-8",
+            )
+
+            # Stdout has 1 speaker line covering the whole duration
+            mock_proc = mock_popen.return_value
+            mock_proc.stdout = [
+                "SPEAKER merge.wav 1 0.000 60.000 <NA> <NA> SPEAKER_01 <NA> <NA>\n"
+            ]
+            mock_proc.wait.return_value = 0
+            mock_proc.returncode = 0
+
+            transcriber = WhisperKitTranscriber("/tmp/whisperkit")
+            result = transcriber.transcribe(audio_path, output_dir)
+
+            self.assertEqual(result, output_dir / "merge.srt.txt")
+            content = result.read_text()
+            # Verify speaker assignment and that splitting occurred
+            self.assertIn("[SPEAKER_01]", content)
+            self.assertIn("This is a", content)
+            self.assertIn("long", content)
+            indices = [line for line in content.splitlines() if line.isdigit()]
+            self.assertGreater(len(indices), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -118,20 +118,23 @@ class WhisperKitTranscriber(BaseTranscriber):
             
             process.wait()
             
-            result_path = None
-            if segments:
-                result_path = WhisperKitReportWriter(audio_path).write(segments)
-                logger.info(f"Transcription finished segments={len(segments)} output=\"{result_path.name}\"", action="transcribe_ok")
-            else:
-                audio_stem = wav_path.stem
-                report_json = report_dir / audio_stem / "transcription.json"
-                if not report_json.exists():
-                    report_json = report_dir / f"{audio_stem}.json"
-                
-                if process.returncode == 0 and report_json.exists():
-                    result_path = self._process_report(report_json, audio_path)
+            # Prefer JSON report for better timing and granularity, but use captured segments for diarization
+            audio_stem = wav_path.stem
+            report_json = report_dir / audio_stem / "transcription.json"
+            if not report_json.exists():
+                report_json = report_dir / f"{audio_stem}.json"
+
+            if process.returncode == 0 and report_json.exists():
+                json_segments = self._load_json_segments(report_json)
+                if segments:
+                    # Enrich JSON segments with speaker info from captured segments
+                    json_segments = self._enrich_with_speakers(json_segments, segments)
+                return WhisperKitReportWriter(audio_path).write(json_segments)
             
-            return result_path
+            if segments:
+                return WhisperKitReportWriter(audio_path).write(segments)
+            
+            return None
             
         finally:
             # Cleanup intermediate WAV file if it was created from a different source
@@ -139,16 +142,48 @@ class WhisperKitTranscriber(BaseTranscriber):
                 logger.info(f"Cleaning up intermediate WAV: {wav_path.name}", action="cleanup")
                 wav_path.unlink(missing_ok=True)
 
-
-    def _process_report(self, report_json: Path, original_audio: Path) -> Path | None:
+    def _load_json_segments(self, report_json: Path) -> list[dict]:
         try:
             data = json.loads(report_json.read_text(encoding="utf-8"))
-            result_path = WhisperKitReportWriter(original_audio).write(data.get("segments", []))
-            logger.info(f"Transcription report processed path=\"{result_path.name}\"", action="report_ok")
-            return result_path
+            return data.get("segments", [])
         except Exception as e:
-            logger.error(f"Error processing WhisperKit report: {e}", action="report_error")
-            return None
+            logger.error(f"Error loading WhisperKit report: {e}", action="report_load_error")
+            return []
+
+    def _enrich_with_speakers(self, target_segments: list[dict], speaker_segments: list[dict]) -> list[dict]:
+        """Assign speaker IDs to target segments based on best time overlap with speaker segments."""
+        if not speaker_segments: return target_segments
+        
+        for tseg in target_segments:
+            t_start = tseg.get("start", 0.0)
+            t_end = tseg.get("end", 0.0)
+            
+            best_speaker = None
+            max_overlap = -1.0
+            
+            for sseg in speaker_segments:
+                s_start = sseg.get("start", 0.0)
+                s_end = sseg.get("end", 0.0)
+                
+                # Calculate overlap duration
+                overlap_start = max(t_start, s_start)
+                overlap_end = min(t_end, s_end)
+                overlap = max(0, overlap_end - overlap_start)
+                
+                if overlap > max_overlap:
+                    max_overlap = overlap
+                    best_speaker = sseg.get("speaker")
+            
+            if best_speaker:
+                tseg["speaker"] = best_speaker
+                
+        return target_segments
+
+    def _process_report(self, report_json: Path, original_audio: Path) -> Path | None:
+        """Deprecated: Use _load_json_segments and WhisperKitReportWriter directly."""
+        segments = self._load_json_segments(report_json)
+        if not segments: return None
+        return WhisperKitReportWriter(original_audio).write(segments)
 
 
 class WhisperKitReportWriter:
@@ -190,46 +225,61 @@ class WhisperKitReportWriter:
         return srt_path
 
     def _resegment(self, segments: list[dict]) -> list[dict]:
-        # 1. Flatten all words across all segments in sequence
-        all_words = []
+        # 1. Reconstruct word-level timestamps anchored to segments for better sync
+        reconstructed_words = []
         for seg in segments:
-            speaker = seg.get("speaker")
+            seg_start = seg.get("start", 0.0)
+            seg_end = seg.get("end", 0.0)
+            seg_speaker = seg.get("speaker")
             raw_words = seg.get("words", [])
+            
+            # Strip Whisper special tokens from segment text
+            seg_text = seg.get("text", "").strip()
+            seg_text = re.sub(r"<\|.+?\|>", "", seg_text)
+            
+            if not raw_words:
+                # Fallback: Split large coarse segments into manageable pieces
+                if seg_text:
+                    split_pieces = self._split_text_segment({
+                        "text": seg_text,
+                        "start": seg_start,
+                        "end": seg_end,
+                        "speaker": seg_speaker
+                    })
+                    reconstructed_words.extend(split_pieces)
+                continue
+                
+            seg_text_len = sum(len(rw.get("word", "").strip()) for rw in raw_words)
+            if seg_text_len == 0: continue
+            
+            seg_duration = seg_end - seg_start
+            elapsed_chars = 0
             for rw in raw_words:
                 w_text = rw.get("word", "").strip()
+                w_text = re.sub(r"<\|.+?\|>", "", w_text)
                 if not w_text: continue
-                all_words.append({"text": w_text, "speaker": speaker})
+                char_len = len(w_text)
+                w_start = seg_start + (elapsed_chars / seg_text_len) * seg_duration
+                elapsed_chars += char_len
+                w_end = seg_start + (elapsed_chars / seg_text_len) * seg_duration
+                reconstructed_words.append({
+                    "text": w_text,
+                    "start": round(w_start, 3),
+                    "end": round(w_end, 3),
+                    "speaker": seg_speaker
+                })
 
-        if not all_words:
-            results = []
-            for seg in segments: results.extend(self._split_text_segment(seg))
-            return results
 
-        # 2. Global Linearized Timeline Reconstruction
-        total_chars = sum(len(w["text"]) for w in all_words)
-        total_duration = max(segments[-1].get("end", 0.0), 1.0) if segments else 1.0
-        
-        reconstructed_words = []
-        elapsed_chars = 0
-        for w in all_words:
-            char_len = len(w["text"])
-            w_start = (elapsed_chars / total_chars) * total_duration
-            elapsed_chars += char_len
-            w_end = (elapsed_chars / total_chars) * total_duration
-            reconstructed_words.append({
-                "text": w["text"],
-                "start": round(w_start, 3),
-                "end": round(w_end, 3),
-                "speaker": w["speaker"]
-            })
+        if not reconstructed_words:
+            return []
 
-        # 3. Group into SRT entries with high-quality breaking rules
-        must_glue_suffixes = r"(一個|一个|的|了|是|在|和|與|与|為|为|或|及)$"
+        # 2. Group into SRT entries with high-quality breaking rules
+        must_glue_suffixes = r"(一個|一个|的|了|是|在|和|與|与|為|为|或|及|其|於|于|之|者|也|已|又|但|而|著|着|就|都|到)$"
         date_pattern = r"\d+[年月日至號号]"
         punct_to_strip = r"^[，。,．？！,.\?! \t]+"
-        import re
 
         entries = []
+
         current_words = []
         chunk_start = reconstructed_words[0]["start"]
 
@@ -258,27 +308,34 @@ class WhisperKitReportWriter:
                 if any(p in w_text for p in "，,"):
                     should_split = True
             
-            # Rule D: Length Hard Limits (with Glue Check)
+            # Rule D: Length Hard Limits (with Glue Check and Fragment lookahead)
             if not should_split:
-                # If current word is English, check if it's the start of something that should be kept
-                # (Simple heuristic: don't break between two English words)
                 is_english = bool(re.search(r'[A-Za-z]$', w_text))
-                is_next_english = False
-                if i + 1 < len(reconstructed_words):
-                    is_next_english = bool(re.search(r'^[A-Za-z]', reconstructed_words[i+1]["text"]))
-
+                is_next_english = (i + 1 < len(reconstructed_words) and bool(re.search(r'^[A-Za-z]', reconstructed_words[i+1]["text"])))
+                
                 if current_len >= self.max_chars or current_duration >= self.max_duration:
                     is_glued = bool(re.search(must_glue_suffixes, w_text))
                     is_date = bool(re.search(date_pattern, w_text))
                     
                     if not is_glued and not is_date and not (is_english and is_next_english):
-                        should_split = True
-                    elif current_len > 40: # Hard limit
+                        # LOOKAHEAD: Avoid leaving tiny fragments (< 6 chars) hanging in next line
+                        remaining_chars = 0
+                        for j in range(i + 1, min(i + 6, len(reconstructed_words))):
+                            if reconstructed_words[j]["speaker"] == w_speaker:
+                                if any(p in reconstructed_words[j]["text"] for p in "。！？，,"): break
+                                remaining_chars += len(reconstructed_words[j]["text"])
+                            else: break
+                        
+                        if remaining_chars > 0 and remaining_chars < 6 and current_len < 45:
+                            # Swallow the fragment into current line instead of splitting
+                            should_split = False
+                        else:
+                            should_split = True
+                    elif current_len > 50: # Absolute hard limit
                         should_split = True
 
             if should_split:
                 text = "".join(x["text"] for x in current_words).strip()
-                # Remove leading punctuation
                 text = re.sub(punct_to_strip, "", text)
                 if text:
                     entries.append({"start": chunk_start, "end": w_end, "text": text, "speaker": w_speaker})
@@ -290,7 +347,12 @@ class WhisperKitReportWriter:
             text = "".join(x["text"] for x in current_words).strip()
             text = re.sub(punct_to_strip, "", text)
             if text:
-                entries.append({"start": chunk_start, "end": current_words[-1]["end"], "text": text, "speaker": current_words[-1]["speaker"]})
+                # Small optimization: If previous entry for same speaker exists and we are tiny, merge back
+                if entries and entries[-1]["speaker"] == current_words[0]["speaker"] and len(text) < 5 and len(entries[-1]["text"]) < 40:
+                    entries[-1]["text"] += text
+                    entries[-1]["end"] = current_words[-1]["end"]
+                else:
+                    entries.append({"start": chunk_start, "end": current_words[-1]["end"], "text": text, "speaker": current_words[-1]["speaker"]})
 
         # Final pass: Ensure global monotonicity across segments
         final_entries = []
