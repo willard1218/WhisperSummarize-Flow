@@ -94,7 +94,7 @@ def parse_and_run(
     load_local_config()
     parser = build_parser(base_dir=base_dir, parse_run_date=parse_run_date)
     args = parser.parse_args(argv)
-    setup_logging(level=logging.DEBUG if args.debug else logging.INFO, format_type="kv")
+    setup_logging(level=logging.DEBUG if args.debug else logging.INFO, format_type="kv", log_file=args.log_file)
 
     root = Path(args.output_root).expanduser().resolve()
     items = build_items(args, root)

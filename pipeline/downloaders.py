@@ -50,6 +50,10 @@ class YouTubeDownloader(BaseDownloader):
             detail = res.audio_path.name if res.audio_path else "ok"
             context.log_event(item_index, "download", "ok", time.monotonic() - t_start, detail)
             return True
+        
+        if not use_archive:
+            item.failed = True
+            
         context.log_event(item_index, "download", "skipped", time.monotonic() - t_start, "no new video")
         return False
 
@@ -136,4 +140,8 @@ class PodcastDownloader(BaseDownloader):
                 item.title = res.title
             context.log_event(item_index, "download", "ok", time.monotonic() - t_start, res.audio_path.name)
             return True
+        
+        # If not skipped and not success, it's an error
+        item.failed = True
+        context.report_status(item_index, f"❌ 下載失敗：{item.label}", level="error")
         return False

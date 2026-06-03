@@ -66,18 +66,38 @@ class ApplePodcastsResolver(BaseRSSResolver):
         return parsed.netloc.lower() == "podcasts.apple.com"
 
     def resolve(self, url: str) -> str:
-        data, _ = fetch_bytes(url)
-        html = data.decode("utf-8", "ignore")
-        patterns = [
-            r'"feedUrl":"([^"]+)"',
-            r'"feedUrl":"(https:[^"]+)"',
-            r'"feedUrl":\s*"([^"]+)"',
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, html)
-            if match:
-                return decode_escaped_url(match.group(1))
-        raise ValueError("Could not find feedUrl on the Apple Podcasts page.")
+        try:
+            data, _ = fetch_bytes(url)
+            html = data.decode("utf-8", "ignore")
+            patterns = [
+                r'"feedUrl":"([^"]+)"',
+                r'"feedUrl":"(https:[^"]+)"',
+                r'"feedUrl":\s*"([^"]+)"',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, html)
+                if match:
+                    return decode_escaped_url(match.group(1))
+        except Exception as e:
+            print(f"Warning: Scraping failed for {url}: {e}", file=sys.stderr)
+
+        # Fallback: Extract ID and use iTunes API
+        match = re.search(r"/id(\d+)", url)
+        if match:
+            podcast_id = match.group(1)
+            try:
+                # Try with multiple country codes if necessary, or just global
+                itunes_url = f"https://itunes.apple.com/lookup?id={podcast_id}&entity=podcast"
+                data, _ = fetch_bytes(itunes_url)
+                res = json.loads(data.decode("utf-8"))
+                if res.get("results"):
+                    feed_url = res["results"][0].get("feedUrl")
+                    if feed_url:
+                        return feed_url
+            except Exception as e:
+                print(f"Warning: iTunes API lookup failed for {podcast_id}: {e}", file=sys.stderr)
+
+        raise ValueError("Could not find feedUrl on the Apple Podcasts page or via iTunes API.")
 
 def get_resolvers() -> List[BaseRSSResolver]:
     """Returns all registered resolvers. Order matters."""
@@ -93,7 +113,8 @@ def resolve_rss_url(url: str) -> str:
 # --- Helper Functions ---
 
 def fetch_bytes(url: str) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "download-latest-podcast/1.0"})
+    ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    request = urllib.request.Request(url, headers={"User-Agent": ua})
     with urllib.request.urlopen(request) as response:
         return (response.read(), response.info().get_content_type())
 
@@ -203,17 +224,37 @@ def handle_direct_episode(url: str, output_dir: Path, show_title_hint: Optional[
 
 # --- Main Logic ---
 
-def resolve_apple_episode_guid(episode_id: str) -> Optional[str]:
-    """Uses iTunes API to find the RSS GUID for a given Apple Podcast episode ID."""
-    url = f"https://itunes.apple.com/lookup?id={episode_id}&entity=podcastEpisode"
+def resolve_apple_episode_guid(episode_id: str, episode_url: Optional[str] = None) -> Optional[str]:
+    """Uses iTunes API or episode page HTML to find the RSS GUID for a given Apple Podcast episode ID."""
+    # 1. Try iTunes API lookup
+    itunes_url = f"https://itunes.apple.com/lookup?id={episode_id}&entity=podcastEpisode"
     try:
-        data, _ = fetch_bytes(url)
+        data, _ = fetch_bytes(itunes_url)
         res = json.loads(data.decode("utf-8"))
         for result in res.get("results", []):
             if str(result.get("trackId")) == episode_id:
-                return result.get("episodeGuid")
+                guid = result.get("episodeGuid")
+                if guid: return guid
     except Exception as e:
         print(f"Warning: iTunes API lookup failed for {episode_id}: {e}", file=sys.stderr)
+
+    # 2. Try scraping the episode page if URL is provided
+    if episode_url:
+        try:
+            data, _ = fetch_bytes(episode_url)
+            html = data.decode("utf-8", "ignore")
+            # Look for episodeGuid in various formats (JSON-LD, etc.)
+            patterns = [
+                r'"episodeGuid":"([^"]+)"',
+                r'"guid":"([^"]+)"',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, html)
+                if match:
+                    return match.group(1)
+        except Exception as e:
+            print(f"Warning: Scrape failed for {episode_url}: {e}", file=sys.stderr)
+
     return None
 
 def main() -> int:
@@ -277,7 +318,7 @@ def main() -> int:
         query_params = urllib.parse.parse_qs(parsed_url.query)
         apple_id = query_params.get("i", [None])[0]
         if apple_id:
-            resolved_guid = resolve_apple_episode_guid(apple_id)
+            resolved_guid = resolve_apple_episode_guid(apple_id, args.podcast_url)
             item = None
             for candidate in channel.findall("item"):
                 guid = candidate.findtext("guid")
@@ -289,7 +330,7 @@ def main() -> int:
                     item = candidate
                     break
             
-            if not item:
+            if item is None:
                 print(f"Error: Specific Apple episode {apple_id} (GUID: {resolved_guid}) not found in RSS.", file=sys.stderr)
                 return 1
         else:

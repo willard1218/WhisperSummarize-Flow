@@ -24,6 +24,9 @@ from pipeline.download_latest_podcast import fetch_bytes, NO_EPISODE_EXIT_CODE
 from tools.recipient_groups import resolve_emails, load_recipient_groups
 from tools.notifier import marker_path_for, send_mail
 from tools.output_paths import podcast_directory_name, subscribed_podcast_output_dir
+from tools.logger import get_logger
+
+logger = get_logger("podcasts")
 
 @dataclass
 class PodcastSyncResult:
@@ -79,6 +82,11 @@ def sync_podcast_latest(source_url: str, output_dir: Path, run_date: Optional[da
         run_date = None
 
     dl_res = download_single_podcast(source_url, output_dir, run_date, downloader_bin)
+    
+    if dl_res.returncode != 0 and dl_res.returncode != NO_EPISODE_EXIT_CODE:
+        logger.error(f"Download failed with exit code {dl_res.returncode}", action="download_error")
+        if dl_res.stderr:
+            logger.error(f"Download stderr: {dl_res.stderr.strip()}", action="download_error")
     
     if dl_res.returncode == NO_EPISODE_EXIT_CODE:
         result.skipped = True
