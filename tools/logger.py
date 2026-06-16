@@ -36,8 +36,8 @@ class KVFormatter(logging.Formatter):
             parts.append(f"exc=\"{self.formatException(record.exc_info).replace('\n', ' ')}\"")
         return " ".join(parts)
 
-def setup_logging(level=logging.INFO, format_type="kv", log_file=None, max_bytes=10*1024*1024, backup_count=5):
-    handlers = [logging.StreamHandler(sys.stdout)]
+def setup_logging(level=logging.INFO, format_type="kv", log_file=None, max_bytes=10*1024*1024, backup_count=5, use_stderr=False):
+    handlers = [logging.StreamHandler(sys.stderr if use_stderr else sys.stdout)]
     if log_file: 
         handlers.append(RotatingFileHandler(log_file, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"))
 

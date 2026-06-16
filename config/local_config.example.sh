@@ -36,3 +36,22 @@ SMTP_FROM="yourname@icloud.com"
 
 # Optional overrides:
 # RECIPIENT_CONFIG_FILE="$HOME/path/to/WhisperSummarize-Flow/config/recipient_groups.local.json"
+
+# Binary Paths (Required)
+WS_YT_DLP_BIN="yt-dlp"
+WS_FFMPEG_BIN="ffmpeg"
+WS_FFPROBE_BIN="ffprobe"
+WS_OPENCC_BIN="opencc"
+WS_WHISPERKIT_BIN="whisperkit-cli"
+
+# Output Capacity Limits (in bytes, default 5GB)
+WS_MAX_OUTPUT_DAILY_BYTES="5368709120"
+WS_MAX_OUTPUT_TELEGRAM_BYTES="5368709120"
+
+# Pipeline Settings (Required)
+WS_OUTPUT_ROOT="output"
+WS_TRANSCRIBE_SCRIPT="gensrt.sh"
+WS_DEFAULT_CONCURRENCY="4"
+WS_DEFAULT_TRANSCRIBER="whisperkit"
+WS_ENABLE_TRADITIONALIZE="True"
+WS_OPENCC_CONFIG="s2twp.json"

@@ -37,6 +37,26 @@ class YouTubeDownloader(BaseDownloader):
         res = self.sync_youtube_latest_fn(item.source_url, item.output_dir, use_archive=use_archive)
         if res.success:
             item.audio_path = res.audio_path
+            if res.transcript_path:
+                item.transcript_path = res.transcript_path
+                # Map to .srt.txt for consistency if it's a CC
+                if res.is_cc:
+                    # We want to treat this CC as a finished transcription
+                    # The pipeline expects .srt.txt and .txt
+                    new_srt_txt = res.transcript_path.with_name(res.transcript_path.name + ".srt.txt")
+                    res.transcript_path.rename(new_srt_txt)
+                    item.transcript_path = new_srt_txt
+                    
+                    # Also create a plain .txt version
+                    plain_txt = new_srt_txt.with_name(new_srt_txt.name.replace(".srt.txt", ".txt"))
+                    # Minimal conversion from VTT/SRT to plain text if possible, 
+                    # but for now just copying is fine, or let the pipeline handle it.
+                    # Actually, if we just copy it, summarize_transcript might struggle with timestamps.
+                    # But the pipeline's traditionalize stage expects .srt.txt.
+                    shutil.copy(new_srt_txt, plain_txt)
+                    
+                    context.report_status(item_index, "ℹ️ 偵測到 YouTube 字幕，跳過語音下載與轉錄")
+
             item.download_ready = True
             if res.specific_url:
                 item.source_url = res.specific_url
@@ -47,7 +67,7 @@ class YouTubeDownloader(BaseDownloader):
             if getattr(context.args, "task_origin", "") == "telegram" and "telegram/youtube" in str(item.output_dir):
                 self._move_to_channel_folder(item, context, item_index)
 
-            detail = res.audio_path.name if res.audio_path else "ok"
+            detail = res.audio_path.name if res.audio_path else (res.transcript_path.name if res.transcript_path else "ok")
             context.log_event(item_index, "download", "ok", time.monotonic() - t_start, detail)
             return True
         
@@ -95,10 +115,13 @@ class YouTubeDownloader(BaseDownloader):
                     shutil.move(str(item.output_dir), str(new_output_dir))
                 
                 # Update item state
-                old_path = item.audio_path
+                old_audio = item.audio_path
+                old_transcript = item.transcript_path
                 item.output_dir = new_output_dir
-                if old_path:
-                    item.audio_path = new_output_dir / old_path.name
+                if old_audio:
+                    item.audio_path = new_output_dir / old_audio.name
+                if old_transcript:
+                    item.transcript_path = new_output_dir / old_transcript.name
                 
                 update_task_metadata(item.output_dir, {"channel": channel_name})
                 context.report_status(item_index, f"📂 已歸類至頻道：{channel_name}")

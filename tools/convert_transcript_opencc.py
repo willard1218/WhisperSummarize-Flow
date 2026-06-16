@@ -54,7 +54,7 @@ def main() -> int:
     parser.add_argument("--config", default="s2twp.json", help="OpenCC config")
     args = parser.parse_args()
 
-    setup_logging(format_type="kv")
+    setup_logging(format_type="kv", use_stderr=True)
 
     input_path = Path(args.input_path).expanduser().resolve()
     if not input_path.exists():

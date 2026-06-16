@@ -406,9 +406,12 @@ class TelegramUpdateHandler:
             
             # Count pending tasks
             pending_count = 0
-            with sqlite3.connect(self.registry.db_path) as conn:
+            conn = sqlite3.connect(self.registry.db_path)
+            try:
                 res = conn.execute("SELECT COUNT(*) FROM task_queue WHERE status = 'pending'")
                 pending_count = res.fetchone()[0]
+            finally:
+                conn.close()
             
             queue_msg = f"\n目前排隊中任務：{pending_count}" if pending_count > 0 else ""
             self.api_client.send_message(chat_id, f"目前系統狀態：\n{sys_status}{queue_msg}\n\n{daily_status}")
@@ -562,6 +565,7 @@ def main() -> int:
     )
     
     poller = TelegramPoller(api_client, handler)
+    logger.info("Telegram Poller started", action="poller_start")
     
     try:
         poller.run_forever()

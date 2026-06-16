@@ -105,6 +105,8 @@ class ItemLifecycleProcessor:
                 error_msg = f"❌ {item.label} 下載失敗"
                 self._fail_item(item_index, item, error_msg, "Download failed", f"{error_msg} (URL: {item.source_url})", notify_direct=True, trigger_fix=True)
             except Exception as exc:
+                import traceback
+                traceback.print_exc()
                 item.failed = True
                 error_msg = f"❌ {item.label} 下載錯誤: {exc}"
                 self.context.report_status(item_index, error_msg, level="error")
@@ -118,17 +120,25 @@ class ItemLifecycleProcessor:
             self._fail_item(item_index, item, error_msg, "No downloader found", error_msg, notify_direct=True)
 
     def _run_transcribe_stage(self, item_index: int, item: DailyItem) -> None:
+        if item.transcript_path and item.transcript_path.exists():
+            self.context.report_status(item_index, "⏭️ 使用現有逐字稿 (CC)")
+            return
+
         existing = self.transcript_path_for_fn(item.audio_path) if item.audio_path else None
         if self.args.enable_transcribe:
             summary_hant = existing.with_name(existing.name.replace(".srt.txt", ".zh-Hant.summary.md")) if existing else None
-            is_stale = bool(existing and existing.exists() and item.audio_path.stat().st_mtime > existing.stat().st_mtime)
-            if (existing and existing.exists() and not is_stale) or (summary_hant and summary_hant.exists() and not is_stale):
+            has_existing = bool(existing and existing.exists())
+            has_summary = bool(summary_hant and summary_hant.exists())
+            is_stale = bool(has_existing and item.audio_path.stat().st_mtime > existing.stat().st_mtime)
+            
+            if (has_existing and not is_stale) or (has_summary and not is_stale):
                 item.transcript_path = existing
                 meta = load_task_metadata(item.output_dir)
                 item.processing_time_str = meta.get("processing_time_str", "Cached")
                 if item.audio_path and item.audio_path.exists():
                     item.duration_str = self.transcriber.get_audio_duration(item.audio_path)
-                self.context.report_status(item_index, "⏭️ 轉錄已存在")
+                status_msg = "⏭️ 轉錄已存在" if has_existing else "⏭️ 摘要已存在，跳過轉錄"
+                self.context.report_status(item_index, status_msg)
                 return
             if self.args.mock:
                 self._write_mock_transcript(item_index, item)
@@ -185,22 +195,26 @@ class ItemLifecycleProcessor:
         t_start = time.monotonic()
         conv_script = self.base_dir / "tools" / "convert_transcript_opencc.py"
         try:
-            if item.transcript_path.name.endswith(".srt.txt") and not item.transcript_path.name.endswith(".zh-Hant.srt.txt"):
+            if item.transcript_path and item.transcript_path.name.endswith(".srt.txt") and not item.transcript_path.name.endswith(".zh-Hant.srt.txt"):
                 hant = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
                 if not (hant.exists() and hant.stat().st_mtime >= item.transcript_path.stat().st_mtime):
-                    res = self.run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", self.args.opencc_config])
-                    if res.returncode != 0:
-                        raise RuntimeError(res.stderr.strip() or f"OpenCC conversion failed for SRT (status {res.returncode})")
-            txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt"))
-            if txt_path.exists() and not txt_path.name.endswith(".zh-Hant.txt"):
+                    if item.transcript_path.exists():
+                        res = self.run_command([sys.executable, str(conv_script), str(item.transcript_path), "--output-path", str(hant), "--config", self.args.opencc_config])
+                        if res.returncode != 0:
+                            raise RuntimeError(res.stderr.strip() or f"OpenCC conversion failed for SRT (status {res.returncode})")
+                    else:
+                        self.context.report_status(item_index, "⚠️ 轉錄原始檔(SRT)遺失，跳過繁體化")
+            txt_path = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".txt")) if item.transcript_path else None
+            if txt_path and txt_path.exists() and not txt_path.name.endswith(".zh-Hant.txt"):
                 txt_hant = txt_path.with_name(txt_path.name[:-4] + ".zh-Hant.txt")
                 if not (txt_hant.exists() and txt_hant.stat().st_mtime >= txt_path.stat().st_mtime):
                     res = self.run_command([sys.executable, str(conv_script), str(txt_path), "--output-path", str(txt_hant), "--config", self.args.opencc_config])
                     if res.returncode != 0:
                         raise RuntimeError(res.stderr.strip() or f"OpenCC conversion failed for TXT (status {res.returncode})")
-            hant_srt = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
-            if hant_srt.exists():
-                item.mail_attachment_path = hant_srt
+            if item.transcript_path:
+                hant_srt = item.transcript_path.with_name(item.transcript_path.name.replace(".srt.txt", ".zh-Hant.srt.txt"))
+                if hant_srt.exists():
+                    item.mail_attachment_path = hant_srt
             self.context.log_event(item_index, "traditionalize", "ok", time.monotonic() - t_start)
         except Exception as exc:
             error_msg = f"❌ {item.label} 繁體化失敗: {exc}"
@@ -246,7 +260,7 @@ class ItemLifecycleProcessor:
             self._fail_item(item_index, item, error_msg, error_msg, error_msg, notify_direct=True, trigger_fix=True)
 
     def _run_notify_stage(self, item_index: int, item: DailyItem) -> None:
-        if not item.mail_attachment_path and item.transcript_path:
+        if not item.mail_attachment_path and item.transcript_path and item.transcript_path.exists():
             item.mail_attachment_path = item.transcript_path
         for notifier in self.get_notifiers_fn():
             if not notifier.is_enabled(self.args):

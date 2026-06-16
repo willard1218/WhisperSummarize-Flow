@@ -25,8 +25,15 @@ class RecipientGroup(BaseModel):
 
 class AppConfig(BaseModel):
     # Core paths
-    output_root: str = "output"
-    transcribe_script: str = "gensrt.sh"
+    output_root: str
+    transcribe_script: str
+    
+    # Tool paths
+    yt_dlp_bin: str
+    ffmpeg_bin: str
+    ffprobe_bin: str
+    opencc_bin: str
+    whisperkit_bin: str
     
     # AI Config
     gemini_api_key: Optional[str] = None
@@ -34,17 +41,24 @@ class AppConfig(BaseModel):
     # Telegram Config
     telegram_bot_token: Optional[str] = None
     telegram_authorized_chats: List[str] = []
+    telegram_chat_id: Optional[str] = None
     
     # Mail Config
-    smtp_server: str = "smtp.gmail.com"
-    smtp_port: int = 587
+    smtp_server: str
+    smtp_port: int
     smtp_user: Optional[str] = None
     smtp_password: Optional[str] = None
-    mail_sender: str = "WhisperSummarize <noreply@example.com>"
+    mail_sender: str
     
     # Pipeline Config
-    default_concurrency: int = 4
-    default_transcriber: TranscriberType = TranscriberType.WHISPERKIT
+    default_concurrency: int
+    default_transcriber: TranscriberType
+    enable_traditionalize: bool
+    opencc_config: str
+    
+    # Capacity Config
+    max_output_daily_bytes: int
+    max_output_telegram_bytes: int
     
     class Config:
         env_prefix = "WS_"

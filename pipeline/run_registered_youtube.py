@@ -25,10 +25,12 @@ from tools.output_paths import subscribed_youtube_output_dir, youtube_channel_di
 @dataclass
 class YouTubeSyncResult:
     audio_path: Optional[Path] = None
+    transcript_path: Optional[Path] = None
     specific_url: Optional[str] = None
     title: str = ""
     success: bool = False
     already_exists: bool = False
+    is_cc: bool = False
 
 def load_subscriptions(path: Path) -> list[dict]:
     if not path.exists():
@@ -42,6 +44,80 @@ def make_channel_slug(channel_url: str) -> str:
 
 def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True)
+
+def check_youtube_subtitles(video_url: str) -> dict:
+    """Checks for available subtitles and automatic captions."""
+    yt_dlp_bin = os.environ.get("YT_DLP_BIN", "yt-dlp")
+    # We use --print to get the subtitles and automatic_captions metadata
+    result = run_command([
+        yt_dlp_bin, "--skip-download", "--quiet", "--no-warnings",
+        "--print", "%(subtitles)j", "--print", "%(automatic_captions)j",
+        video_url
+    ])
+    if result.returncode != 0:
+        return {"subtitles": {}, "automatic_captions": {}}
+    
+    try:
+        lines = result.stdout.strip().splitlines()
+        subs = json.loads(lines[0]) if len(lines) > 0 and lines[0] != "NA" else {}
+        auto = json.loads(lines[1]) if len(lines) > 1 and lines[1] != "NA" else {}
+        return {"subtitles": subs, "automatic_captions": auto}
+    except (json.JSONDecodeError, IndexError):
+        return {"subtitles": {}, "automatic_captions": {}}
+
+def download_youtube_subtitles(video_url: str, output_dir: Path, preferred_langs: list[str] = ["zh-Hant", "zh-TW", "zh-HK", "zh-Hans", "zh", "en"]) -> Optional[Path]:
+    """Attempts to download preferred subtitles or automatic captions."""
+    yt_dlp_bin = os.environ.get("YT_DLP_BIN", "yt-dlp")
+    
+    # Check what's available first to pick the best one
+    info = check_youtube_subtitles(video_url)
+    
+    target_lang = None
+    use_auto = False
+    
+    # 1. Try manual subtitles first
+    for lang in preferred_langs:
+        if lang in info["subtitles"]:
+            target_lang = lang
+            break
+    
+    # 2. Try automatic captions if no manual sub found
+    if not target_lang:
+        for lang in preferred_langs:
+            if lang in info["automatic_captions"]:
+                target_lang = lang
+                use_auto = True
+                break
+    
+    if not target_lang:
+        return None
+
+    # Download the chosen subtitle
+    cmd = [
+        yt_dlp_bin, "--skip-download",
+        "--write-subs" if not use_auto else "--write-auto-subs",
+        "--sub-langs", target_lang,
+        "--paths", str(output_dir),
+        "-o", "%(title).200B__%(id)s.%(ext)s",
+        video_url
+    ]
+    run_command(cmd)
+    
+    # Find the downloaded file (it usually has .<lang>.<ext> extension)
+    # yt-dlp might save as .vtt, .srt, .ass, etc. We prefer srt or vtt.
+    # The -o template ends with .%(ext)s but subtitles have extra part.
+    # Actually -o applies to the video file, subtitles are named accordingly.
+    # Let's search for files matching *__<vid>.<lang>.*
+    vid_match = re.search(r"v=([a-zA-Z0-9_-]+)", video_url) or re.search(r"be/([a-zA-Z0-9_-]+)", video_url)
+    vid = vid_match.group(1) if vid_match else None
+    if not vid: return None
+    
+    for ext in ["srt", "vtt"]:
+        matches = list(output_dir.glob(f"*__{vid}.{target_lang}.{ext}"))
+        if matches:
+            return matches[0]
+            
+    return None
 
 def resolve_youtube_latest(channel_url: str) -> dict | None:
     yt_dlp_bin = os.environ.get("YT_DLP_BIN", "yt-dlp")
@@ -121,9 +197,17 @@ def sync_youtube_latest(source_url: str, output_dir: Path, use_archive: bool = T
             result.success = True
             return result
 
-    # Actually download
-    archive_file = Path(__file__).resolve().parent.parent / "id.txt" if use_archive else None
+    # 1. Try CC subtitles first
     target_url = result.specific_url or source_url
+    cc_path = download_youtube_subtitles(target_url, output_dir)
+    if cc_path:
+        result.transcript_path = cc_path
+        result.is_cc = True
+        result.success = True
+        return result
+
+    # 2. Fallback to audio download
+    archive_file = Path(__file__).resolve().parent.parent / "id.txt" if use_archive else None
     
     dl_res = download_youtube_video(target_url, output_dir, archive_file)
     
