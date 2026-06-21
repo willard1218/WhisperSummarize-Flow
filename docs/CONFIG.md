@@ -22,8 +22,20 @@ cp config/youtube_subscriptions.example.json config/youtube_subscriptions.json
 - `ENABLE_TRANSCRIBE`: `"1"` 執行轉錄，`"0"` 略過（若音檔已存在）。
 - `ENABLE_TRADITIONALIZE`: `"1"` 執行簡轉繁，`"0"` 關閉。
 - `ENABLE_SUMMARIZE`: `"1"` 執行 AI 摘要。
-- `ENABLE_OLLAMA`: `"1"` 優先使用本地 Ollama 摘要，`"0"` 僅使用 Gemini。
+- `ENABLE_OLLAMA`: `"1"` 開啟本地 Ollama 作為 Gemini API 後的 fallback。
+- `ENABLE_OPENCODE`: `"1"` 開啟 OpenCode CLI 作為額外 fallback。
 - `ENABLE_MAIL`, `ENABLE_TELEGRAM`: 是否開啟通知。
+
+#### Gemini API 摘要
+摘要預設透過 Gemini HTTP API 執行，請在本機設定檔填入 API key：
+
+```bash
+GEMINI_API_KEY="你的GeminiAPIKey"
+GEMINI_MODEL="gemini-flash-latest"
+GEMINI_TIMEOUT_SECONDS="300"
+```
+
+`GEMINI_API_KEY` 不應提交到 git；請只放在 `config/local_config.sh`。
 
 #### 通知與寄信方式
 1. **Telegram**:

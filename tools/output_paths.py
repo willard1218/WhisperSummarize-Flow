@@ -74,7 +74,20 @@ def telegram_url_output_dir(base_output_root: Path, url: str) -> Path:
     if "youtube.com" in url or "youtu.be" in url:
         video_id = youtube_video_id(url)
         if video_id:
-            return base_output_root / "telegram" / "youtube" / video_id
+            # Check if it was moved to a channel folder: output/telegram/youtube/{channel}/{video_id}
+            base_yt = base_output_root / "telegram" / "youtube"
+            if base_yt.exists():
+                # Search for a directory named video_id inside base_yt
+                for item in base_yt.iterdir():
+                    if item.is_dir():
+                        if item.name == video_id:
+                            return item
+                        # Check one level deeper for channel folder
+                        candidate = item / video_id
+                        if candidate.is_dir():
+                            return candidate
+            
+            return base_yt / video_id
         
         # Fallback for YouTube URLs where ID extraction fails (e.g. channel URLs)
         # Use hash to avoid collisions in "unknown-video"

@@ -71,17 +71,18 @@ def run_auto_fix(task_label: str, error_msg: str, log_file: str = None):
 [狀態]：(成功/需要人工介入)
 """
 
-    # 2. Invoke Gemini CLI in YOLO mode
+    # 2. Invoke OpenCode in autonomous mode
     # We use a long timeout as fixing might take several turns
     try:
+        opencode_bin = os.environ.get("OPENCODE_BIN") or "opencode"
         cmd = [
-            "/opt/homebrew/bin/gemini", 
-            "--yolo", 
-            "--skip-trust", 
-            "--prompt", full_prompt
+            opencode_bin, "run",
+            "-m", "opencode/big-pickle",
+            "--dangerously-skip-permissions",
+            full_prompt
         ]
         
-        logger.info("Invoking Gemini CLI for autonomous repair...", action="ai_invoke")
+        logger.info("Invoking OpenCode for autonomous repair...", action="ai_invoke")
         # Note: In a real scenario, this might run for a while. 
         # We capture stdout to find the report tags.
         process = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=str(BASE_DIR))

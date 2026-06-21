@@ -33,7 +33,8 @@ class KVFormatter(logging.Formatter):
         msg = record.getMessage().replace('"', '\\"').replace('\n', '\\n')
         parts.append(f"msg=\"{msg}\"")
         if record.exc_info:
-            parts.append(f"exc=\"{self.formatException(record.exc_info).replace('\n', ' ')}\"")
+            exception_text = self.formatException(record.exc_info).replace("\n", " ")
+            parts.append(f"exc=\"{exception_text}\"")
         return " ".join(parts)
 
 def setup_logging(level=logging.INFO, format_type="kv", log_file=None, max_bytes=10*1024*1024, backup_count=5, use_stderr=False):
@@ -65,15 +66,17 @@ class AIConsumerLogger:
         if "extra" in kwargs:
             extra.update(kwargs.pop("extra"))
             
-        # 2. Extract special keywords
-        for key in ["task", "action", "model", "status", "duration"]:
-            if key in kwargs:
+        # 2. Extract special keywords and move all other unknown kwargs to extra
+        # Standard keywords from Python logging or our conventions
+        std_keywords = ["exc_info", "stack_info", "stacklevel", "extra"]
+        
+        # Copy kwargs to iterate and modify
+        keys = list(kwargs.keys())
+        for key in keys:
+            if key not in std_keywords:
                 extra[key] = kwargs.pop(key)
         
         # 3. Call the underlying logger with increased stacklevel
-        # Default stacklevel is 1. Since we have a wrapper (_log) and 
-        # convenience methods (info, etc.), we need stacklevel=3 
-        # to reach the real caller.
         kwargs.setdefault("stacklevel", 3)
         self.logger.log(level, msg, *args, extra=extra, **kwargs)
 

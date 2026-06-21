@@ -134,6 +134,16 @@ def parse_and_run(
         args.max_output_telegram_bytes = app_config.max_output_telegram_bytes
     
     # Map toggles and tool paths
+    if args.enable_transcribe is None:
+        args.enable_transcribe = app_config.enable_transcribe
+    if args.enable_traditionalize is None:
+        args.enable_traditionalize = app_config.enable_traditionalize
+    if args.enable_summarize is None:
+        args.enable_summarize = app_config.enable_summarize
+    if args.enable_mail is None:
+        args.enable_mail = app_config.enable_mail
+    if args.enable_telegram is None:
+        args.enable_telegram = app_config.enable_telegram
     if args.opencc_config is None:
         args.opencc_config = app_config.opencc_config
     

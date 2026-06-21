@@ -17,7 +17,7 @@ class BaseTranscriber(ABC):
     @staticmethod
     def get_audio_duration(audio_path: Path) -> str:
         """Returns the duration of the audio file in HH:MM:SS format using ffprobe."""
-        ffprobe_bin = os.environ.get("FFPROBE_BIN", "ffprobe")
+        ffprobe_bin = os.environ.get("FFPROBE_BIN") or os.environ.get("WS_FFPROBE_BIN") or "ffprobe"
         try:
             cmd = [
                 ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
@@ -53,7 +53,7 @@ class WhisperKitTranscriber(BaseTranscriber):
     def __init__(self, bin_path: str, model_path: str = None):
         self.bin_path = bin_path
         self.model_path = model_path
-        self.ffmpeg_bin = os.environ.get("FFMPEG_BIN", "ffmpeg")
+        self.ffmpeg_bin = os.environ.get("FFMPEG_BIN") or os.environ.get("WS_FFMPEG_BIN") or "ffmpeg"
 
     def transcribe(self, audio_path: Path, output_dir: Path) -> Path | None:
         # 1. Convert to WAV (16kHz mono)
@@ -79,7 +79,6 @@ class WhisperKitTranscriber(BaseTranscriber):
                 self.bin_path, "transcribe",
                 "--audio-path", str(wav_path),
                 "--diarization",
-                "--language", "zh"
             ]
             if self.model_path:
                 cmd += ["--model-path", self.model_path]

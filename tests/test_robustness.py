@@ -88,18 +88,23 @@ class TestRobustness(unittest.TestCase):
         title = get_task_title("../../../etc/passwd.mp3")
         self.assertEqual(title, "../../../etc/passwd")
 
-    # 5. GeminiSummarizer Trust Flag
-    @patch("tools.summarize_transcript.subprocess.run")
-    def test_gemini_summarizer_uses_skip_trust(self, mock_run):
+    # 5. GeminiSummarizer API request
+    @patch.dict("tools.summarize_transcript.os.environ", {"GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "gemini-flash-latest"}, clear=False)
+    @patch("tools.summarize_transcript.urllib.request.urlopen")
+    def test_gemini_summarizer_uses_api_key_header(self, mock_urlopen):
         from tools.summarize_transcript import GeminiSummarizer
-        mock_run.return_value = MagicMock(stdout="Summary result", returncode=0)
+
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'{"candidates":[{"content":{"parts":[{"text":"Summary result"}]}}]}'
+        mock_urlopen.return_value.__enter__.return_value = mock_response
         
         summarizer = GeminiSummarizer()
-        summarizer.summarize("test prompt")
+        result = summarizer.summarize("test prompt")
         
-        # Check if the first call to gemini ask had --skip-trust
-        args = mock_run.call_args.args[0]
-        self.assertIn("--skip-trust", args)
+        self.assertEqual(result, "Summary result")
+        request = mock_urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("X-goog-api-key"), "test-key")
+        self.assertIn("gemini-flash-latest:generateContent", request.full_url)
 
 if __name__ == "__main__":
     unittest.main()

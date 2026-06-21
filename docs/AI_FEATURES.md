@@ -15,12 +15,11 @@
 
 ## 摘要功能 (Summarization)
 ...
-系統採用優先序機制，可透過環境變數動態切換：
+系統採用 Gemini API 作為預設摘要引擎，API key 從 `config/local_config.sh` 載入，不會寫死在程式碼內。
 
-1.  **Ollama (本地)**: 若設定 `ENABLE_OLLAMA="1"`，則優先使用本地模型（預設為 `qwen2.5:7b`）。這對於保護隱私與節省雲端配額非常有用。
-2.  **Gemini (雲端)**: 預設摘要引擎。
-    *   優先使用 `gemini-3-pro-preview` 模型。
-    *   若 Pro 模型失敗（如 Quota 限制），自動退回使用 `gemini-3-flash-preview`。
+1.  **Gemini API (預設)**: 使用 `GEMINI_API_KEY` 呼叫 Google Generative Language API，預設模型為 `gemini-flash-latest`。
+2.  **Ollama (選用 fallback)**: 若設定 `ENABLE_OLLAMA="1"`，Gemini 不可用或沒有輸出時可接著嘗試本地模型（預設為 `qwen2.5:7b`）。
+3.  **OpenCode CLI (選用 fallback)**: 若設定 `ENABLE_OPENCODE="1"`，可再接著嘗試 OpenCode CLI。
 
 ## 核心流程
 
@@ -31,7 +30,7 @@
 
 ## 自訂 Prompt
 
-您可以在 `prompts/` 資料夾下建立專屬的 Markdown 檔案，內容必須包含 `{transcript_content}` 佔位符。
+您可以在 `prompts/` 資料夾下建立專屬的 Markdown 檔案，內容建議包含 `{transcript_content}` 佔位符。摘要時會讀取 prompt 檔案，將該佔位符替換成逐字稿內容，然後把完整 prompt 送到 Gemini API。
 
 ### 綁定 Prompt
 

@@ -182,8 +182,9 @@ def check_status():
                 if datetime.fromtimestamp(st_dir.st_mtime).date().isoformat() != today and not task_dir.name.startswith(today.replace("-", "")):
                     continue
                 tasks = process_directory(task_dir, active_wavs, today, today_dots)
-                tg_results.append((f"{task_type}/{task_dir.name}", tasks))
-                all_today_tasks.extend(tasks.values())
+                if tasks:
+                    tg_results.append((f"{task_type}/{task_dir.name}", tasks))
+                    all_today_tasks.extend(tasks.values())
 
     # --- Start Printing ---
     print(f"--- Daily Status Check ({today} {now.strftime('%H:%M:%S')}) ---")

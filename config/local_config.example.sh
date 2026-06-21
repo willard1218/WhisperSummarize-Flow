@@ -11,10 +11,15 @@
 ENABLE_TRANSCRIBE="1"
 ENABLE_TRADITIONALIZE="1"  # Simplified Chinese to Traditional Chinese (OpenCC)
 ENABLE_SUMMARIZE="1"
-ENABLE_OLLAMA="0"          # Use local Ollama for summarization (requires ENABLE_SUMMARIZE="1")
-SUMMARIZE_POLICY="first"   # 'first' to stop at first success, 'all' to run all models for comparison
+ENABLE_OLLAMA="0"          # Optional fallback: use local Ollama for summarization
+ENABLE_OPENCODE="0"        # Optional fallback: use OpenCode CLI for summarization
 ENABLE_MAIL="1"
 ENABLE_TELEGRAM="1"
+
+# Gemini API summarization (required when ENABLE_SUMMARIZE="1")
+GEMINI_API_KEY="your-gemini-api-key"
+GEMINI_MODEL="gemini-flash-latest"
+GEMINI_TIMEOUT_SECONDS="300"
 
 # OpenCC Settings
 OPENCC_CONFIG="s2twp.json"

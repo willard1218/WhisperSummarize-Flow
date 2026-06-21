@@ -34,6 +34,7 @@ class YouTubeDownloader(BaseDownloader):
     def download(self, item: DailyItem, context: PipelineContext, item_index: int) -> bool:
         t_start = time.monotonic()
         use_archive = self.should_use_archive(context)
+        print(f"DEBUG: YouTubeDownloader.download use_archive={use_archive} url={getattr(context.args, 'url', 'MISSING')}")
         res = self.sync_youtube_latest_fn(item.source_url, item.output_dir, use_archive=use_archive)
         if res.success:
             item.audio_path = res.audio_path
@@ -73,8 +74,9 @@ class YouTubeDownloader(BaseDownloader):
         
         if not use_archive:
             item.failed = True
-            
-        context.log_event(item_index, "download", "skipped", time.monotonic() - t_start, "no new video")
+            context.log_event(item_index, "download", "failed", time.monotonic() - t_start, "download failed or file not found")
+        else:
+            context.log_event(item_index, "download", "skipped", time.monotonic() - t_start, "no new video")
         return False
 
     def _move_to_channel_folder(self, item: DailyItem, context: PipelineContext, item_index: int) -> None:

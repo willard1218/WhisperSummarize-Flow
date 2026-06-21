@@ -146,12 +146,17 @@ def resolve_youtube_latest(channel_url: str) -> dict | None:
 def find_youtube_audio(output_dir: Path, video_id: str) -> Optional[Path]:
     if not output_dir.exists():
         return None
-    matches = sorted(output_dir.glob(f"*__{video_id}.mp3"))
-    return matches[0] if matches else None
+    for ext in ["mp3", "webm", "m4a", "wav"]:
+        matches = sorted(output_dir.glob(f"*__{video_id}.{ext}"))
+        if matches:
+            return matches[0]
+    return None
+
+import shutil
 
 def download_youtube_video(video_url: str, output_dir: Path, archive_file: Path | None = None) -> subprocess.CompletedProcess:
     yt_dlp_bin = os.environ.get("YT_DLP_BIN", "yt-dlp")
-    ffmpeg_bin = os.environ.get("FFMPEG_BIN")
+    ffmpeg_bin = os.environ.get("FFMPEG_BIN") or os.environ.get("WS_FFMPEG_BIN")
     
     command = [
         yt_dlp_bin, "--no-overwrites",
@@ -163,10 +168,29 @@ def download_youtube_video(video_url: str, output_dir: Path, archive_file: Path 
         command[1:1] = ["--download-archive", str(archive_file)]
     
     if ffmpeg_bin:
-        command.extend(["--ffmpeg-location", ffmpeg_bin])
+        if not ("/" in ffmpeg_bin or "\\" in ffmpeg_bin):
+            ffmpeg_bin = shutil.which(ffmpeg_bin)
+        
+        if ffmpeg_bin:
+            ffmpeg_path = Path(ffmpeg_bin).resolve()
+            if ffmpeg_path.is_file():
+                command.extend(["--ffmpeg-location", str(ffmpeg_path.parent)])
+            else:
+                command.extend(["--ffmpeg-location", str(ffmpeg_path)])
         
     command.append(video_url)
-    return run_command(command)
+
+    max_attempts = 3
+    last_result = None
+    for attempt in range(1, max_attempts + 1):
+        last_result = run_command(command)
+        if last_result.returncode == 0:
+            return last_result
+        if attempt < max_attempts:
+            delay = 2 ** attempt
+            print(f"yt-dlp attempt {attempt}/{max_attempts} failed (RC={last_result.returncode}). Retrying in {delay}s...")
+            time.sleep(delay)
+    return last_result
 
 def sync_youtube_latest(source_url: str, output_dir: Path, use_archive: bool = True) -> YouTubeSyncResult:
     """
@@ -215,6 +239,11 @@ def sync_youtube_latest(source_url: str, output_dir: Path, use_archive: bool = T
         result.audio_path = find_youtube_audio(output_dir, vid)
         result.success = result.audio_path is not None
         
+        if not result.success:
+            print(f"DEBUG: yt-dlp failed to download audio. RC={dl_res.returncode}")
+            print(f"STDOUT: {dl_res.stdout}")
+            print(f"STDERR: {dl_res.stderr}")
+            
     return result
 
 def main() -> int:

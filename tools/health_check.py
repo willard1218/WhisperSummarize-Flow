@@ -104,7 +104,7 @@ def run_health_check():
             (lambda: (True, "OpenCC found (binary)") if shutil.which("opencc") or os.environ.get("OPENCC_BIN") else (
                 (True, "OpenCC found (python fallback)") if importlib.util.find_spec("opencc") else (False, "OpenCC NOT FOUND (binary or python package)")
             ))(),
-            check_binary("gemini")
+            (check_binary("opencode") if os.environ.get("ENABLE_OPENCODE", "0") == "1" else (True, "OpenCode check skipped (ENABLE_OPENCODE is not 1)."))
         ],
         "Configuration Files": [
             check_file(BASE_DIR / "config" / "local_config.sh", "Local environment config"),
@@ -118,17 +118,11 @@ def run_health_check():
             check_file(BASE_DIR / "tasks.db", "SQLite Registry Database", required=False)
         ],
         "Environment Variables": [
-            (bool(os.environ.get("GEMINI_API_KEY")), "GEMINI_API_KEY is set." if os.environ.get("GEMINI_API_KEY") else "GEMINI_API_KEY is missing (Note: maybe managed by 'gemini' CLI config)."),
+            (bool(os.environ.get("GEMINI_API_KEY")), "GEMINI_API_KEY is set." if os.environ.get("GEMINI_API_KEY") else "GEMINI_API_KEY is MISSING for Gemini API summarization."),
             (bool(os.environ.get("TELEGRAM_BOT_TOKEN")), "TELEGRAM_BOT_TOKEN is set." if os.environ.get("TELEGRAM_BOT_TOKEN") else "TELEGRAM_BOT_TOKEN is MISSING."),
             (bool(os.environ.get("TELEGRAM_CHAT_ID")), "TELEGRAM_CHAT_ID is set." if os.environ.get("TELEGRAM_CHAT_ID") else "TELEGRAM_CHAT_ID is MISSING.")
         ]
     }
-    
-    # Treat GEMINI_API_KEY as optional if missing since the CLI might have it
-    key_results = sections["Environment Variables"]
-    if not os.environ.get("GEMINI_API_KEY"):
-        # Replace the first result (GEMINI_API_KEY) with a passing one if it's the only issue
-        sections["Environment Variables"][0] = (True, "GEMINI_API_KEY is missing but 'gemini' CLI may use global config.")
     
     overall_ok = True
     

@@ -230,11 +230,12 @@ class PipelineLauncher:
     def run(self, chat_id: str | int, url: str | None = None, local_file: Path | None = None, wait: bool = False) -> int:
         command = self.build_command(chat_id=chat_id, url=url, local_file=local_file)
         logger.info(f"Launching pipeline command=\"{' '.join(command)}\"", action="launcher")
+        kwargs = dict(cwd=str(self.base_dir), start_new_session=True)
         if wait:
-            res = subprocess.run(command, cwd=str(self.base_dir))
+            res = subprocess.run(command, **kwargs)
             return res.returncode
         else:
-            subprocess.Popen(command, cwd=str(self.base_dir))
+            subprocess.Popen(command, **kwargs)
             return 0
 
 class TaskWorker:
@@ -431,8 +432,9 @@ class TelegramUpdateHandler:
             self.api_client.send_message(chat_id, "正在處理 AI 請求 (對話模式)...")
             try:
                 # Use --resume latest to maintain conversation context
-                cmd = ["/opt/homebrew/bin/gemini", "--yolo", "--skip-trust", "--resume", "latest", "--prompt", prompt]
-                logger.info(f"Executing AI talk session=latest command=\"{' '.join(cmd)}\"", action="ai_talk")
+                opencode_bin = os.environ.get("OPENCODE_BIN") or "opencode"
+                cmd = [opencode_bin, "run", "-m", "opencode/big-pickle", "--dangerously-skip-permissions", "--continue", prompt]
+                logger.info(f"Executing AI talk command=\"{' '.join(cmd)}\"", action="ai_talk")
                 res = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=str(self.settings.base_dir))
                 output = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', res.stdout.strip() or res.stderr.strip() or "No output")
                 self.api_client.send_message(chat_id, f"AI 回應：\n\n{output}")
@@ -445,7 +447,8 @@ class TelegramUpdateHandler:
             self.api_client.send_message(chat_id, "正在重置 AI 對話記憶...")
             try:
                 # Starting a new session by NOT using resume
-                cmd = ["/opt/homebrew/bin/gemini", "--yolo", "--skip-trust", "--prompt", "Hello! This is a fresh session. Please acknowledge and wait for my instructions."]
+                opencode_bin = os.environ.get("OPENCODE_BIN") or "opencode"
+                cmd = [opencode_bin, "run", "-m", "opencode/big-pickle", "--dangerously-skip-permissions", "Hello! This is a fresh session. Please acknowledge and wait for my instructions."]
                 subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=str(self.settings.base_dir))
                 self.api_client.send_message(chat_id, "✅ 對話記憶已重置，現在可以開始新的討論。")
             except Exception as e:
@@ -525,7 +528,13 @@ class TelegramPoller:
 
 def build_settings() -> ListenerSettings:
     load_project_env(BASE_DIR)
-    return ListenerSettings(BASE_DIR, os.environ.get("TELEGRAM_BOT_TOKEN", ""), os.environ.get("TELEGRAM_CHAT_ID"), sys.executable)
+    # Prefer the venv python if it exists to ensure dependencies like pydantic are available
+    python_exe = sys.executable
+    venv_python = BASE_DIR / "venv" / "bin" / "python3"
+    if venv_python.exists():
+        python_exe = str(venv_python)
+        
+    return ListenerSettings(BASE_DIR, os.environ.get("TELEGRAM_BOT_TOKEN", ""), os.environ.get("TELEGRAM_CHAT_ID"), python_exe)
 
 def main() -> int:
     settings = build_settings()

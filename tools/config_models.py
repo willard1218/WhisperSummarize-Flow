@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field, HttpUrl
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
 from enum import Enum
 
@@ -23,7 +24,7 @@ class RecipientGroup(BaseModel):
     emails: List[str] = []
     telegram_chat_ids: List[int] = []
 
-class AppConfig(BaseModel):
+class AppConfig(BaseSettings):
     # Core paths
     output_root: str
     transcribe_script: str
@@ -53,12 +54,19 @@ class AppConfig(BaseModel):
     # Pipeline Config
     default_concurrency: int
     default_transcriber: TranscriberType
+    enable_transcribe: bool = True
     enable_traditionalize: bool
+    enable_summarize: bool = True
+    enable_mail: bool = True
+    enable_telegram: bool = True
     opencc_config: str
     
     # Capacity Config
     max_output_daily_bytes: int
     max_output_telegram_bytes: int
     
-    class Config:
-        env_prefix = "WS_"
+    model_config = SettingsConfigDict(
+        env_prefix="WS_",
+        env_file=None,
+        extra="ignore"
+    )
