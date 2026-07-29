@@ -7,8 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
+import shutil
+
 from pipeline.models import DailyItem
 from tools.logger import get_logger
+from tools.notifier import send_telegram_msg
 from tools.output_paths import update_task_metadata, youtube_video_id
 
 logger = get_logger("pipeline")
@@ -32,7 +35,6 @@ def cleanup_output_capacity(base_dir: Path, task_origin: str, max_bytes: int) ->
         roots = [output_root / "telegram"]
         label = "Telegram 任務"
     else:
-        # We exclude telegram from the daily count even if it's inside output/
         roots = [output_root / "podcast", output_root / "youtube"]
         label = "每日任務"
 
@@ -40,8 +42,17 @@ def cleanup_output_capacity(base_dir: Path, task_origin: str, max_bytes: int) ->
     if current_size <= max_bytes:
         return
 
+    limit_gb = max_bytes / (1024 ** 3)
+    current_gb = current_size / (1024 ** 3)
     logger.info(f"已達上限 {current_size} bytes (限制: {max_bytes}), 開始清理 {label}", action="capacity_cleanup")
+    send_telegram_msg(
+        f"⚠️ {label}容量超標\n"
+        f"目前：{current_gb:.1f} GB\n"
+        f"上限：{limit_gb:.1f} GB\n"
+        f"開始自動清理最舊檔案…"
+    )
 
+    total_deleted = 0
     while current_size > max_bytes:
         # Find candidates for deletion
         # Candidate format: (mtime, size, list_of_paths_to_delete, display_name)
@@ -72,19 +83,21 @@ def cleanup_output_capacity(base_dir: Path, task_origin: str, max_bytes: int) ->
                                     size = get_dir_size(subp)
                                     candidates.append((mtime, size, [subp], subp.name))
         else:
-            # For daily, items are groups of files sharing a prefix (usually ends with __vid or just the .mp3)
+            # For daily, items are groups of media files sharing a prefix
+            # We only count mp3/mp4 size so deletion converges correctly
+            media_exts = {".mp3", ".mp4"}
             for root in roots:
                 if not root.exists(): continue
                 for channel_dir in root.iterdir():
                     if not channel_dir.is_dir(): continue
-                    # Group files by their base name (everything before .mp3, .txt, etc.)
-                    # We use .mp3 as the anchor for a "program"
-                    for mp3 in channel_dir.glob("*.mp3"):
-                        prefix = mp3.stem
-                        mtime = mp3.stat().st_mtime
-                        related_files = list(channel_dir.glob(f"{prefix}*"))
-                        size = sum(f.stat().st_size for f in related_files if f.is_file())
-                        candidates.append((mtime, size, related_files, prefix))
+                    for media in channel_dir.glob("*.*"):
+                        if media.suffix.lower() not in media_exts:
+                            continue
+                        prefix = media.stem
+                        mtime = media.stat().st_mtime
+                        related = list(channel_dir.glob(f"{prefix}*"))
+                        size = sum(f.stat().st_size for f in related if f.is_file() and f.suffix.lower() in media_exts)
+                        candidates.append((mtime, size, [media], prefix))
 
         if not candidates:
             logger.warning(f"無法在 {label} 中找到可刪除的項目，但容量仍超出限制", action="capacity_cleanup_failed")
@@ -96,19 +109,27 @@ def cleanup_output_capacity(base_dir: Path, task_origin: str, max_bytes: int) ->
 
         logger.info(f"已刪除最舊的節目: {name}", action="capacity_prune", size=oldest_size)
         
+        deleted_names = []
         for p in paths_to_delete:
             try:
                 if p.is_dir():
-                    import shutil
                     shutil.rmtree(p)
                 else:
                     p.unlink()
+                deleted_names.append(name)
             except Exception as e:
                 logger.error(f"無法刪除 {p}: {e}", action="capacity_prune_error")
+        total_deleted += len(deleted_names)
 
-        current_size -= oldest_size
+        current_size = sum(get_dir_size(r) for r in roots)
 
+    final_gb = current_size / (1024 ** 3)
     logger.info(f"清理完成, 當前容量: {current_size} bytes", action="capacity_cleanup_done")
+    send_telegram_msg(
+        f"✅ {label}清理完成\n"
+        f"已刪除 {total_deleted} 個最舊項目\n"
+        f"目前容量：{final_gb:.1f} GB / {limit_gb:.1f} GB"
+    )
 
 
 def trigger_auto_fix(base_dir: Path, item_label: str, error_msg: str, log_file: str | None = None) -> None:

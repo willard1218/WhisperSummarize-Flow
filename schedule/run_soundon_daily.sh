@@ -37,6 +37,14 @@ trap close_own_terminal_window EXIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
+# Ensure Ollama is running for local summarization fallback
+if ! pgrep -q ollama 2>/dev/null; then
+  echo "Starting Ollama server..."
+  nohup ollama serve >/dev/null 2>&1 &
+  sleep 2
+fi
+
 LOCAL_CONFIG_FILE="$BASE_DIR/config/local_config.sh"
 if [[ -f "$LOCAL_CONFIG_FILE" ]]; then
   # shellcheck disable=SC1090
@@ -49,10 +57,12 @@ if [[ -n "${FFMPEG_BIN_DIR:-}" ]]; then
   export PATH="$FFMPEG_BIN_DIR:$PATH"
 fi
 export GENSRT_SCRIPT="${GENSRT_SCRIPT:-$BASE_DIR/gensrt.sh}"
-export PYTHON_BIN="${PYTHON_BIN:-python3}"
+export PYTHON_BIN="${PYTHON_BIN:-$BASE_DIR/venv/bin/python3}"
 export RECIPIENT_CONFIG_FILE="${RECIPIENT_CONFIG_FILE:-$BASE_DIR/config/recipient_groups.local.json}"
 export OPENCC_TRADITIONALIZE="${OPENCC_TRADITIONALIZE:-0}"
 export OPENCC_CONFIG="${OPENCC_CONFIG:-s2twp.json}"
+export ENABLE_OPENCODE=1
+export ENABLE_OLLAMA=1
 
 RUN_DATE="${1:-$(date '+%Y-%m-%d')}"
 OUTPUT_DIR="${2:-$BASE_DIR/output}"

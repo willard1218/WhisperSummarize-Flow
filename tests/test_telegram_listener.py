@@ -3,7 +3,6 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from datetime import datetime
 
 from tools.telegram_listener import (
     ListenerSettings,
@@ -13,8 +12,8 @@ from tools.telegram_listener import (
     TelegramPoller,
     TelegramUpdateHandler,
     TranscriptionStatusProvider,
-    UrlTaskStore,
 )
+from tools.registry import Registry
 
 
 class FakeApiClient:
@@ -80,16 +79,16 @@ class TelegramListenerTests(unittest.TestCase):
         api_client = FakeApiClient()
         launcher = FakeLauncher()
         downloader = FakeDownloader()
-        url_task_store = UrlTaskStore(Path(temp_dir) / "tasks.json")
+        registry = Registry(Path(temp_dir) / "tasks.db")
         handler = TelegramUpdateHandler(
             settings=settings,
             api_client=api_client,
             status_provider=FakeStatusProvider(status),
             pipeline_launcher=launcher,
             file_downloader=downloader,
-            url_task_store=url_task_store,
+            registry=registry,
         )
-        return handler, api_client, launcher, downloader, url_task_store
+        return handler, api_client, launcher, downloader, registry
 
     def test_status_command_reports_current_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -98,9 +97,9 @@ class TelegramListenerTests(unittest.TestCase):
 
             self.assertIn("目前系統狀態：\n忙碌中", api_client.sent_messages[0][1])
 
-    def test_url_message_sends_confirmation_button(self) -> None:
+    def test_url_message_enqueues_task(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, _, _, url_task_store = self.make_handler(temp_dir, status="忙碌中")
+            handler, api_client, _, _, registry = self.make_handler(temp_dir, status="忙碌中")
             url = "https://youtube.com/watch?v=abc"
             handler.handle(
                 {"message": {"chat": {"id": "owner"}, "text": url}}
@@ -108,26 +107,34 @@ class TelegramListenerTests(unittest.TestCase):
 
             chat_id, text, reply_markup = api_client.sent_messages[0]
             self.assertEqual(chat_id, "owner")
-            self.assertIn("是否啟動？", text)
-            
-            # Check callback_data uses short ID
-            url_id = url_task_store.get_id_for_url(url)
-            self.assertEqual(reply_markup["inline_keyboard"][0][0]["callback_data"], f"exec|{url_id}")
+            self.assertIn("✅ 已收到網址並加入排隊", text)
+            self.assertIn(url, text)
+            self.assertIsNone(reply_markup)
 
-    def test_apple_podcast_url_detection(self) -> None:
+            task = registry.get_next_pending_task()
+            self.assertIsNotNone(task)
+            self.assertEqual(task["task_type"], "url")
+            self.assertEqual(task["payload"], url)
+
+    def test_apple_podcast_url_enqueues_task(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, _, _, _ = self.make_handler(temp_dir)
+            handler, api_client, _, _, registry = self.make_handler(temp_dir)
             url = "https://podcasts.apple.com/tw/podcast/id123"
             handler.handle(
                 {"message": {"chat": {"id": "owner"}, "text": url}}
             )
 
-            self.assertIn("偵測到網址", api_client.sent_messages[0][1])
+            self.assertIn("✅ 已收到網址並加入排隊", api_client.sent_messages[0][1])
             self.assertIn(url, api_client.sent_messages[0][1])
 
-    def test_media_message_downloads_and_launches_pipeline(self) -> None:
+            task = registry.get_next_pending_task()
+            self.assertIsNotNone(task)
+            self.assertEqual(task["task_type"], "url")
+            self.assertEqual(task["payload"], url)
+
+    def test_media_message_downloads_and_enqueues(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, launcher, downloader, _ = self.make_handler(temp_dir)
+            handler, api_client, launcher, downloader, registry = self.make_handler(temp_dir)
             handler.handle(
                 {
                     "message": {
@@ -139,12 +146,15 @@ class TelegramListenerTests(unittest.TestCase):
             )
 
             self.assertEqual(downloader.calls[0][0], "file-1")
-            self.assertEqual(launcher.calls[0]["chat_id"], "owner")
-            self.assertIn("/output/telegram/audio/", str(launcher.calls[0]["local_file"]))
-            self.assertTrue(str(launcher.calls[0]["local_file"]).endswith("clip.mp3"))
             self.assertIn("收到媒體：clip.mp3", api_client.sent_messages[0][1])
+            self.assertIn("✅ 下載完成，已加入排隊", api_client.sent_messages[1][1])
             metadata_path = Path(temp_dir) / "output" / "telegram"
             self.assertTrue(any(path.name == "metadata.json" for path in metadata_path.rglob("metadata.json")))
+
+            task = registry.get_next_pending_task()
+            self.assertIsNotNone(task)
+            self.assertEqual(task["task_type"], "file")
+            self.assertTrue(str(task["payload"]).endswith("clip.mp3"))
 
     def test_unauthorized_chat_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -154,28 +164,25 @@ class TelegramListenerTests(unittest.TestCase):
             self.assertEqual(api_client.sent_messages, [])
             self.assertEqual(launcher.calls, [])
 
-    def test_callback_exec_starts_pipeline(self) -> None:
+    def test_callback_query_is_answered(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, launcher, _, url_task_store = self.make_handler(temp_dir)
-            url = "https://youtube.com/watch?v=abc"
-            url_id = url_task_store.get_id_for_url(url)
-            
+            handler, api_client, _, _, _ = self.make_handler(temp_dir)
+
             handler.handle(
                 {
                     "callback_query": {
                         "id": "cb-1",
-                        "data": f"exec|{url_id}",
+                        "data": "cancel",
                         "message": {"chat": {"id": "owner"}, "message_id": 10},
                     }
                 }
             )
 
-            self.assertEqual(api_client.answered[0], ("cb-1", "任務已啟動"))
-            self.assertEqual(launcher.calls[0]["url"], url)
+            self.assertEqual(api_client.answered[0][0], "cb-1")
 
-    def test_video_message_downloads_and_launches_pipeline(self) -> None:
+    def test_video_message_downloads_and_enqueues(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, launcher, downloader, _ = self.make_handler(temp_dir)
+            handler, api_client, launcher, downloader, registry = self.make_handler(temp_dir)
             handler.handle(
                 {
                     "message": {
@@ -187,13 +194,17 @@ class TelegramListenerTests(unittest.TestCase):
             )
 
             self.assertEqual(downloader.calls[0][0], "vid-1")
-            self.assertIn("/output/telegram/video/", str(launcher.calls[0]["local_file"]))
-            self.assertTrue(str(launcher.calls[0]["local_file"]).endswith("movie.mp4"))
+            self.assertIn("/output/telegram/video/", str(downloader.calls[0][1]))
             self.assertIn("收到媒體：movie.mp4", api_client.sent_messages[0][1])
+            self.assertIn("✅ 下載完成，已加入排隊", api_client.sent_messages[1][1])
 
-    def test_video_note_downloads_and_launches_pipeline(self) -> None:
+            task = registry.get_next_pending_task()
+            self.assertIsNotNone(task)
+            self.assertTrue(str(task["payload"]).endswith("movie.mp4"))
+
+    def test_video_note_downloads_and_enqueues(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            handler, api_client, launcher, downloader, _ = self.make_handler(temp_dir)
+            handler, api_client, _, downloader, registry = self.make_handler(temp_dir)
             handler.handle(
                 {
                     "message": {
@@ -205,9 +216,12 @@ class TelegramListenerTests(unittest.TestCase):
             )
 
             self.assertEqual(downloader.calls[0][0], "vn-1")
-            self.assertIn("/output/telegram/video/", str(launcher.calls[0]["local_file"]))
-            # Filename now depends on time or safe_filename logic
-            self.assertTrue(any("vn_" in str(launcher.calls[0]["local_file"]) for call in launcher.calls))
+            self.assertTrue(any("vn_" in str(call[1]) for call in downloader.calls))
+            self.assertIn("收到媒體", api_client.sent_messages[0][1])
+
+            task = registry.get_next_pending_task()
+            self.assertIsNotNone(task)
+            self.assertEqual(task["task_type"], "file")
 
     def test_caption_url_detection(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -221,7 +235,7 @@ class TelegramListenerTests(unittest.TestCase):
                 }
             )
 
-            self.assertIn("偵測到網址", api_client.sent_messages[0][1])
+            self.assertIn("✅ 已收到網址並加入排隊", api_client.sent_messages[0][1])
             self.assertIn("https://youtube.com/watch?v=xyz", api_client.sent_messages[0][1])
 
     def test_transcription_status_provider_real_locks(self) -> None:
@@ -230,28 +244,23 @@ class TelegramListenerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             lock_file = Path(temp_dir) / "test.lock"
             dir_lock = Path(temp_dir) / "dir.lock"
-            
+
             provider = TranscriptionStatusProvider(lock_paths=[lock_file, dir_lock])
-            
-            # 1. Idle
+
             self.assertEqual(provider.describe(), "空閒中")
-            
-            # 2. Flock busy
+
             with open(lock_file, "w") as f:
                 fcntl.flock(f, fcntl.LOCK_EX)
                 self.assertEqual(provider.describe(), "忙碌中")
-            
-            # 3. Flock stale (file exists but no lock)
+
             lock_file.touch()
             self.assertEqual(provider.describe(), "空閒中")
-            
-            # 4. Dir lock busy (process alive)
+
             dir_lock.mkdir()
             (dir_lock / "pid").write_text(str(os.getpid()))
             self.assertEqual(provider.describe(), "忙碌中")
-            
-            # 5. Dir lock stale (process dead)
-            (dir_lock / "pid").write_text("999999") # Hopefully dead
+
+            (dir_lock / "pid").write_text("999999")
             self.assertEqual(provider.describe(), "空閒中")
 
     def test_poller_advances_offset_even_when_handler_raises(self) -> None:
@@ -267,7 +276,6 @@ class TelegramListenerTests(unittest.TestCase):
                 if self.calls == 1:
                     raise RuntimeError("boom")
 
-        # Removed sleep_seconds as it's no longer in __init__
         poller = TelegramPoller(api_client, FlakyHandler())
         poller.poll_once()
 

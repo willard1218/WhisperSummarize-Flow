@@ -17,7 +17,7 @@ class RunDailyPipelineTests(unittest.TestCase):
         args = SimpleNamespace(
             recipient_config="config/recipient_groups.local.json",
             recipient_group="all",
-            url="https://youtube.com/watch?v=abc123",
+            url="https://youtube.com/watch?v=abc123def45",
             local_file=None,
             podcast_config="config/subscriptions.json",
             youtube_config="config/youtube_subscriptions.json",
@@ -28,7 +28,7 @@ class RunDailyPipelineTests(unittest.TestCase):
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].kind, "youtube")
-        self.assertEqual(items[0].output_dir, Path("/tmp/output-root/adhoc_yt_abc123"))
+        self.assertEqual(items[0].output_dir, Path("/tmp/output-root/adhoc_yt_abc123def45"))
 
     @patch("pipeline.run_daily_pipeline.resolve_emails", return_value=["user@example.com"])
     @patch("pipeline.run_daily_pipeline.load_recipient_groups", return_value={})
@@ -58,7 +58,7 @@ class RunDailyPipelineTests(unittest.TestCase):
         args = SimpleNamespace(
             recipient_config="config/recipient_groups.local.json",
             recipient_group="all",
-            url="https://youtube.com/watch?v=abc123",
+            url="https://youtube.com/watch?v=abc123def45",
             local_file=None,
             podcast_config="config/subscriptions.json",
             youtube_config="config/youtube_subscriptions.json",
@@ -67,7 +67,7 @@ class RunDailyPipelineTests(unittest.TestCase):
 
         items = build_items(args, Path("/tmp/output-root"))
 
-        self.assertEqual(items[0].output_dir, Path("/tmp/output-root/telegram/youtube/abc123"))
+        self.assertEqual(items[0].output_dir, Path("/tmp/output-root/telegram/youtube/abc123def45"))
 
     @patch("pipeline.run_daily_pipeline.sync_youtube_latest")
     def test_youtube_downloader_reuses_existing_audio(self, mock_sync) -> None:

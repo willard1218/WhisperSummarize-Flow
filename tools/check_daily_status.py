@@ -84,7 +84,7 @@ def get_task_title(filename: str) -> str:
 
 def process_directory(dir_path: Path, active_wavs: list, today: str, today_dots: str) -> dict:
     """Groups files in a directory into tasks and identifies their pipeline stages."""
-    tasks = defaultdict(lambda: {"stages": {}, "mtime": 0, "title": "", "size": 0})
+    tasks = defaultdict(lambda: {"stages": {}, "mtime": 0, "title": "", "size": 0, "has_today_media": False})
     if not dir_path.exists():
         return tasks
 
@@ -96,6 +96,7 @@ def process_directory(dir_path: Path, active_wavs: list, today: str, today_dots:
             tasks[title]["stages"]["transcribing"] = True
             tasks[title]["title"] = title
 
+    media_suffixes = {".mp3", ".wav", ".m4a", ".webm", ".mp4", ".mov"}
     for f in dir_path.rglob("*"):
         if not f.is_file() or f.name == ".DS_Store": continue
         
@@ -112,16 +113,19 @@ def process_directory(dir_path: Path, active_wavs: list, today: str, today_dots:
             if st.st_mtime > tasks[title]["mtime"]:
                 tasks[title]["mtime"] = st.st_mtime
             
-            if f.suffix in [".mp3", ".wav", ".m4a", ".webm", ".mp4", ".mov"]:
+            if f.suffix.lower() in media_suffixes:
                 tasks[title]["stages"]["download"] = True
+                if mtime_date == today:
+                    tasks[title]["has_today_media"] = True
             elif f.name.endswith(".srt.txt") or f.name.endswith(".zh-Hant.txt") or f.name.endswith(".srt"):
                 tasks[title]["stages"]["transcribe"] = True
             elif f.name.endswith(".summary.md"):
                 tasks[title]["stages"]["summarize"] = True
             elif ".sent" in f.name:
                 tasks[title]["stages"]["mail"] = True
-                
-    return tasks
+
+    # Only return tasks that have today's media or are actively transcribing
+    return {k: v for k, v in tasks.items() if v["has_today_media"] or v["stages"].get("transcribing")}
 
 def get_overall_stats(root: Path):
     """Calculates total count and size of all tasks in the output directory."""

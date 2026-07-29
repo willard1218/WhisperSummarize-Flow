@@ -61,6 +61,8 @@ class MediaMessage:
 class TelegramApiClient:
     def __init__(self, settings: ListenerSettings):
         self.settings = settings
+        self.error_counts: dict[str, dict[str, int]] = {}
+        self.last_error_report: float = 0
 
     def call_api(self, method: str, data: dict | None = None) -> dict | None:
         url = self.settings.api_url + method
@@ -78,12 +80,36 @@ class TelegramApiClient:
                         logger.error(f"API error method={method} desc=\"{res_data.get('description')}\"", action="api_error")
                     return res_data
             except Exception as exc:
-                logger.warning(f"API retry attempt={attempt+1} method={method} error=\"{exc}\"", action="api_retry")
+                error_type = type(exc).__name__
+                if not (method == "getUpdates" and error_type == "URLError"):
+                    self.error_counts.setdefault(method, {}).setdefault(error_type, 0)
+                    self.error_counts[method][error_type] += 1
+                logger.debug(f"API retry attempt={attempt+1} method={method} error=\"{exc}\"", action="api_retry")
                 if attempt < 2:
                     time.sleep(2)
                 else:
                     return None
         return None
+
+    def _build_error_summary(self) -> str | None:
+        if not self.error_counts:
+            return None
+        total = sum(c for m in self.error_counts.values() for c in m.values())
+        lines = [f"📊 Telegram API 錯誤統計（過去 1 小時）", f"總計：{total} 次錯誤"]
+        for method, errors in sorted(self.error_counts.items()):
+            for etype, count in sorted(errors.items()):
+                lines.append(f"  {method} — {etype}: {count} 次")
+        return "\n".join(lines)
+
+    def send_error_report_if_needed(self, owner_chat_id: str | int) -> None:
+        now = time.time()
+        if now - self.last_error_report < 3600:
+            return
+        summary = self._build_error_summary()
+        if summary:
+            self.send_message(owner_chat_id, summary)
+        self.error_counts.clear()
+        self.last_error_report = now
 
     def send_message(self, chat_id: str | int, text: str, reply_markup: dict | None = None) -> dict | None:
         """Sends a text message, automatically chunking if it exceeds the Telegram character limit."""
@@ -171,7 +197,23 @@ class TranscriptionStatusProvider:
     def _check_lock_self_healing(self, path: Path) -> bool:
         if not path.exists():
             return False
-        
+
+        # 0. Handle directory-based locks (dir containing a "pid" file)
+        if path.is_dir():
+            pid_file = path / "pid"
+            if pid_file.exists():
+                content = pid_file.read_text().strip()
+                if content.isdigit():
+                    pid = int(content)
+                    if self._is_process_alive(pid):
+                        return True
+                    else:
+                        logger.warning(f"Stale dir lock detected for pid={pid} at {path}. Self-healing...", action="lock_cleanup")
+                        try: import shutil; shutil.rmtree(path)
+                        except: pass
+                        return False
+            return False
+
         # 1. Try to read PID from lock file
         try:
             content = path.read_text().strip()
@@ -384,7 +426,15 @@ class TelegramUpdateHandler:
         self.interpreter = interpreter or MessageInterpreter()
 
     def handle(self, update: dict) -> None:
-        if "message" in update: self._handle_message(update["message"])
+        if "message" in update:
+            self._handle_message(update["message"])
+        elif "callback_query" in update:
+            self._handle_callback_query(update["callback_query"])
+
+    def _handle_callback_query(self, callback_query: dict) -> None:
+        cb_id = callback_query.get("id")
+        if cb_id:
+            self.api_client.answer_callback_query(cb_id)
 
     def _handle_message(self, message: dict) -> None:
         chat_id = str(message.get("chat", {}).get("id"))
@@ -422,25 +472,6 @@ class TelegramUpdateHandler:
             log_path = self.settings.base_dir / "logs" / "telegram_listener.log"
             if log_path.exists(): self.api_client.send_document(chat_id, log_path, caption="System Log")
             else: self.api_client.send_message(chat_id, "Log file not found.")
-            return
-
-        if text.lower().startswith("/ai_talk"):
-            prompt = text[len("/ai_talk"):].strip()
-            if not prompt:
-                self.api_client.send_message(chat_id, "請提供指令。", reply_markup={"force_reply": True, "selective": True})
-                return
-            self.api_client.send_message(chat_id, "正在處理 AI 請求 (對話模式)...")
-            try:
-                # Use --resume latest to maintain conversation context
-                opencode_bin = os.environ.get("OPENCODE_BIN") or "opencode"
-                cmd = [opencode_bin, "run", "-m", "opencode/big-pickle", "--dangerously-skip-permissions", "--continue", prompt]
-                logger.info(f"Executing AI talk command=\"{' '.join(cmd)}\"", action="ai_talk")
-                res = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=str(self.settings.base_dir))
-                output = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', res.stdout.strip() or res.stderr.strip() or "No output")
-                self.api_client.send_message(chat_id, f"AI 回應：\n\n{output}")
-            except Exception as e:
-                logger.error(f"AI talk failed error=\"{e}\"", action="ai_talk_error")
-                self.api_client.send_message(chat_id, f"發生錯誤：{e}")
             return
 
         if text == "/ai_reset":
@@ -509,9 +540,83 @@ class TelegramUpdateHandler:
         else:
             self.api_client.send_message(chat_id, "❌ 下載失敗。")
 
+class PipelineHealthMonitor:
+    PIPELINE_LOG = BASE_DIR / "launchd_download_and_transcribe.log"
+    STATE_FILE = BASE_DIR / "launchd_state" / "pipeline_health.json"
+
+    def __init__(self, send_alert_fn):
+        self.send_alert = send_alert_fn
+        self.state = self._load()
+        self.iteration = 0
+
+    def _load(self) -> dict:
+        try:
+            if self.STATE_FILE.exists():
+                return json.loads(self.STATE_FILE.read_text())
+        except Exception:
+            pass
+        return {"last_alert": 0, "consecutive_failures": 0}
+
+    def _save(self):
+        self.STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.STATE_FILE.write_text(json.dumps(self.state, ensure_ascii=False, indent=2))
+
+    def check(self):
+        self.iteration += 1
+        if self.iteration % 300 != 0:
+            return
+        now = time.time()
+        if not self.PIPELINE_LOG.exists():
+            return
+        try:
+            result = subprocess.run(["tail", "-30", str(self.PIPELINE_LOG)], capture_output=True, text=True, timeout=10)
+            tail_output = result.stdout
+        except Exception:
+            return
+        if not tail_output:
+            return
+        lines = tail_output.splitlines()
+        pipeline_succeeded = any("Pipeline finished overall_ok=True" in line for line in lines)
+        if pipeline_succeeded:
+            self.state["consecutive_failures"] = 0
+            self._save()
+            return
+
+        _YTDLP_KEYWORDS = {"yt-dlp", "youtube", "members-only", "geo-restricted", "private video"}
+        has_error = False
+        error_lines_raw = []
+        for line in lines:
+            lower = line.lower()
+            if any(kw in lower for kw in ["traceback", "modulenotfounderror", "importerror", "exception:", "crash"]):
+                has_error = True
+                error_lines_raw.append(line.strip())
+            elif "error:" in lower or "failed" in lower:
+                if any(kw in lower for kw in _YTDLP_KEYWORDS):
+                    continue
+                has_error = True
+                error_lines_raw.append(line.strip())
+
+        if has_error:
+            self.state["consecutive_failures"] = self.state.get("consecutive_failures", 0) + 1
+        else:
+            self.state["consecutive_failures"] = 0
+
+        if self.state["consecutive_failures"] >= 3 and now - self.state.get("last_alert", 0) > 3600:
+            error_lines = error_lines_raw[:8]
+            msg = f"⚠️ Pipeline 健康檢查異常\n連續 {self.state['consecutive_failures']} 次排程執行失敗\n\n最近錯誤：\n" + "\n".join(error_lines) + f"\n\n檢查日誌：{self.PIPELINE_LOG}"
+            logger.warning(f"Pipeline health alert triggered", action="pipeline_alert")
+            self.send_alert(msg)
+            self.state["last_alert"] = now
+        self._save()
+
+
 class TelegramPoller:
-    def __init__(self, api_client: TelegramApiClient, update_handler: TelegramUpdateHandler):
-        self.api_client, self.update_handler, self.last_update_id = api_client, update_handler, 0
+    def __init__(self, api_client: TelegramApiClient, update_handler: TelegramUpdateHandler, health_monitor: PipelineHealthMonitor | None = None, owner_chat_id: str | int | None = None):
+        self.api_client = api_client
+        self.update_handler = update_handler
+        self.health_monitor = health_monitor
+        self.owner_chat_id = owner_chat_id
+        self.last_update_id = 0
     def poll_once(self) -> None:
         updates = self.api_client.get_updates(self.last_update_id + 1)
         if updates and updates.get("ok"):
@@ -522,7 +627,13 @@ class TelegramPoller:
     def run_forever(self) -> None:
         logger.info("Telegram Poller started", action="poller_start")
         while True:
-            try: self.poll_once(); time.sleep(1)
+            try:
+                self.poll_once()
+                if self.health_monitor:
+                    self.health_monitor.check()
+                if self.owner_chat_id:
+                    self.api_client.send_error_report_if_needed(self.owner_chat_id)
+                time.sleep(1)
             except KeyboardInterrupt: break
             except Exception as e: logger.error(f"Loop error error=\"{e}\"", action="poller_error"); time.sleep(10)
 
@@ -573,7 +684,8 @@ def main() -> int:
         registry
     )
     
-    poller = TelegramPoller(api_client, handler)
+    health_monitor = PipelineHealthMonitor(lambda msg: api_client.send_message(settings.owner_chat_id, msg))
+    poller = TelegramPoller(api_client, handler, health_monitor, settings.owner_chat_id)
     logger.info("Telegram Poller started", action="poller_start")
     
     try:

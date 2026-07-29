@@ -3,7 +3,6 @@
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -20,7 +19,7 @@ from project_runtime import bootstrap_project
 BASE_DIR = bootstrap_project(ROOT_DIR)
 
 from tools.recipient_groups import resolve_emails, load_recipient_groups
-from tools.output_paths import subscribed_youtube_output_dir, youtube_channel_directory_name
+from tools.output_paths import subscribed_youtube_output_dir, youtube_channel_directory_name, youtube_video_id
 
 @dataclass
 class YouTubeSyncResult:
@@ -108,8 +107,7 @@ def download_youtube_subtitles(video_url: str, output_dir: Path, preferred_langs
     # The -o template ends with .%(ext)s but subtitles have extra part.
     # Actually -o applies to the video file, subtitles are named accordingly.
     # Let's search for files matching *__<vid>.<lang>.*
-    vid_match = re.search(r"v=([a-zA-Z0-9_-]+)", video_url) or re.search(r"be/([a-zA-Z0-9_-]+)", video_url)
-    vid = vid_match.group(1) if vid_match else None
+    vid = youtube_video_id(video_url)
     if not vid: return None
     
     for ext in ["srt", "vtt"]:
@@ -154,6 +152,21 @@ def find_youtube_audio(output_dir: Path, video_id: str) -> Optional[Path]:
 
 import shutil
 
+def _cleanup_residual_downloads(video_url: str) -> None:
+    """Remove yt-dlp intermediate files left in CWD after -x extraction."""
+    vid = youtube_video_id(video_url)
+    if not vid:
+        return
+    cwd = Path.cwd()
+    for f in cwd.glob(f"*[{vid}]*"):
+        if f.is_file() and f.suffix.lower() in {".mp4", ".webm", ".mkv", ".part", ".temp"}:
+            try:
+                f.unlink()
+                print(f"DEBUG: Cleaned up residual download: {f.name}")
+            except Exception as e:
+                print(f"DEBUG: Failed to clean up {f.name}: {e}")
+
+
 def download_youtube_video(video_url: str, output_dir: Path, archive_file: Path | None = None) -> subprocess.CompletedProcess:
     yt_dlp_bin = os.environ.get("YT_DLP_BIN", "yt-dlp")
     ffmpeg_bin = os.environ.get("FFMPEG_BIN") or os.environ.get("WS_FFMPEG_BIN")
@@ -185,11 +198,13 @@ def download_youtube_video(video_url: str, output_dir: Path, archive_file: Path 
     for attempt in range(1, max_attempts + 1):
         last_result = run_command(command)
         if last_result.returncode == 0:
+            _cleanup_residual_downloads(video_url)
             return last_result
         if attempt < max_attempts:
             delay = 2 ** attempt
             print(f"yt-dlp attempt {attempt}/{max_attempts} failed (RC={last_result.returncode}). Retrying in {delay}s...")
             time.sleep(delay)
+    _cleanup_residual_downloads(video_url)
     return last_result
 
 def sync_youtube_latest(source_url: str, output_dir: Path, use_archive: bool = True) -> YouTubeSyncResult:
@@ -202,8 +217,10 @@ def sync_youtube_latest(source_url: str, output_dir: Path, use_archive: bool = T
     vid = None
 
     if is_direct_video:
-        vid_match = re.search(r"v=([a-zA-Z0-9_-]+)", source_url) or re.search(r"be/([a-zA-Z0-9_-]+)", source_url)
-        vid = vid_match.group(1) if vid_match else None
+        vid = youtube_video_id(source_url)
+        if not vid:
+            print(f"Rejecting invalid YouTube URL (no valid 11-char video ID): {source_url}")
+            return result
         result.specific_url = source_url
     else:
         latest = resolve_youtube_latest(source_url)
@@ -240,9 +257,16 @@ def sync_youtube_latest(source_url: str, output_dir: Path, use_archive: bool = T
         result.success = result.audio_path is not None
         
         if not result.success:
-            print(f"DEBUG: yt-dlp failed to download audio. RC={dl_res.returncode}")
-            print(f"STDOUT: {dl_res.stdout}")
-            print(f"STDERR: {dl_res.stderr}")
+            stderr_lower = (dl_res.stderr or "").lower()
+            if "members-only" in stderr_lower or "private video" in stderr_lower:
+                if archive_file:
+                    with open(archive_file, "a") as f:
+                        f.write(f"youtube {vid}\n")
+                print(f"DEBUG: Skipping members-only/private video {vid}, added to archive")
+            else:
+                print(f"DEBUG: yt-dlp failed to download audio. RC={dl_res.returncode}")
+                print(f"STDOUT: {dl_res.stdout}")
+                print(f"STDERR: {dl_res.stderr}")
             
     return result
 

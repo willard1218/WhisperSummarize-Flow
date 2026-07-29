@@ -5,9 +5,9 @@ from tools.logger import get_logger
 
 logger = get_logger(__name__)
 
-def retry(max_retries=3, initial_delay=1, backoff_factor=2, exceptions=(Exception,)):
+def retry(max_retries=3, initial_delay=1, backoff_factor=2, max_delay=120, exceptions=(Exception,)):
     """
-    Retry decorator with exponential backoff and jitter.
+    Retry decorator with exponential backoff, jitter, and max delay cap.
     """
     def decorator(func):
         @functools.wraps(func)
@@ -25,7 +25,7 @@ def retry(max_retries=3, initial_delay=1, backoff_factor=2, exceptions=(Exceptio
                     
                     # Exponential backoff with jitter
                     jitter = random.uniform(0, 0.1 * delay)
-                    sleep_time = delay + jitter
+                    sleep_time = min(delay, max_delay) + jitter
                     logger.warning(f"Function {func.__name__} failed (attempt {retries}/{max_retries}): {e}. Retrying in {sleep_time:.2f}s...")
                     time.sleep(sleep_time)
                     delay *= backoff_factor
